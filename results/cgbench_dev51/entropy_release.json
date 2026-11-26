@@ -1,0 +1,1 @@
+{"capped_focus": 1, "cases": 51, "focus": 258, "gpu_released": true, "holdout": 0, "invalid_action": 6, "invalid_qa_cells": 0, "labels": 0, "peak_bytes": 21491613696, "qa": 191, "status": "entropy_routing_factorial_audited", "terminal": "d8ce34786ac5fbb2f29b68f4d4df3b9e28b40a8ab59aed15ea3348249d9b8d19", "training": 0}

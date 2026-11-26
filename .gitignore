@@ -1,0 +1,29 @@
+# Python & caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# OS & editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Runtime logs, PIDs, raw media & temporary frames
+*.log
+*.pid
+*.tmp
+*.mp4
+*.webm
+*.mkv
+*.avi
+*.jpg
+*.jpeg
+*.png
+*.pt
+*.pth
+*.safetensors
+action/
