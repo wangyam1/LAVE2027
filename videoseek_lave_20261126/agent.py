@@ -21,51 +21,47 @@ from .prompts import (
 
 
 def decode_frames_pyav(video_path, timestamps_s, *, short_side=None, max_pixels=None):
-    """Decode exact frames closest to requested timestamps (seconds) using PyAV."""
-    import av
+    """Decode exact frames closest to requested timestamps (seconds) via deadlock-free OpenCV VideoCapture."""
+    import cv2
 
     if not timestamps_s:
         return [], []
-    with av.open(str(video_path)) as container:
-        stream = container.streams.video[0]
-        stream.thread_type = "AUTO"
-        tb = float(stream.time_base) if stream.time_base else (1.0 / 30.0)
-        fps = float(stream.average_rate) if stream.average_rate else 30.0
-        dur = float(container.duration) / 1e6 if container.duration else 0.0
-        if dur <= 0.0 and stream.frames and fps > 0:
-            dur = float(stream.frames) / fps
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise RuntimeError(f"Failed to open video: {video_path}")
+    try:
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        if fps <= 0.0:
+            fps = 25.0
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        dur = (total_frames / fps) if total_frames > 0 else max(timestamps_s) + 1.0
 
         images = []
         actual_ts = []
         for req_t in timestamps_s:
             t = max(0.0, min(float(req_t), max(0.0, dur - 0.05)))
-            target_pts = int(t / tb) if tb > 0 else 0
-            try:
-                container.seek(max(0, target_pts), stream=stream, backward=True, any_frame=False)
-            except Exception:
-                container.seek(0)
-            best_img = None
-            best_ts = t
-            best_diff = float("inf")
-            scanned = 0
-            for frame in container.decode(video=0):
-                fts = float(frame.pts * tb) if frame.pts is not None else t
-                diff = abs(fts - t)
-                if diff <= best_diff:
-                    best_diff = diff
-                    best_ts = fts
-                    best_img = frame.to_image()
-                scanned += 1
-                if fts >= t and scanned >= 2:
-                    break
-                if scanned >= 120:
-                    break
-            if best_img is None:
-                best_img = Image.new("RGB", (320, 240), (0, 0, 0))
-            best_img = _resize_image(best_img, short_side=short_side, max_pixels=max_pixels)
-            images.append(best_img)
-            actual_ts.append(round(best_ts, 2))
+            frame_idx = int(round(t * fps))
+            if total_frames > 0:
+                frame_idx = max(0, min(frame_idx, total_frames - 1))
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ok, bgr = cap.read()
+            if not ok or bgr is None:
+                # Fallback: step slightly backward if near EOF
+                cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, frame_idx - 5))
+                ok, bgr = cap.read()
+            if ok and bgr is not None:
+                rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(rgb)
+                fts = frame_idx / fps
+            else:
+                img = Image.new("RGB", (320, 240), (0, 0, 0))
+                fts = t
+            img = _resize_image(img, short_side=short_side, max_pixels=max_pixels)
+            images.append(img)
+            actual_ts.append(round(fts, 2))
         return images, actual_ts
+    finally:
+        cap.release()
 
 
 def _resize_image(img: Image.Image, *, short_side=None, max_pixels=None) -> Image.Image:
