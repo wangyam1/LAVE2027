@@ -17,6 +17,7 @@ from videoseek_lave_20261126.agent import (
 )
 from videoseek_lave_20261126.engine_ext import concat_multi_image_embeds
 from videoseek_lave_20261126.holmes_inputs import HOLMES_CATEGORIES, build_balanced_holmes_manifests
+from videoseek_lave_20261126.mme_inputs import parse_mme_options
 
 
 class TestVideoSeekLaveCPU(unittest.TestCase):
@@ -125,6 +126,10 @@ class TestVideoSeekLaveCPU(unittest.TestCase):
             self.assertEqual(set(pilot["order"]) & set(eval_m["order"]), set())
             self.assertNotIn("Answer", json.dumps(pilot))
             self.assertNotIn("Explanation", json.dumps(eval_m))
+
+    def test_parse_mme_options(self):
+        opts = parse_mme_options(["A. Apples.", "B. Candles.", "C. Berries.", "D. All same."])
+        self.assertEqual(opts, {"A": "Apples.", "B": "Candles.", "C": "Berries.", "D": "All same."})
 
 
 if __name__ == "__main__":
