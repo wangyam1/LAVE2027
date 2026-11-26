@@ -370,6 +370,15 @@ class AgentConfig:
     answer_max_tokens: int = 32
 
 
+_GLOBAL_VLM_CALL_SEQ = 0
+
+
+def _next_vlm_call_uid():
+    global _GLOBAL_VLM_CALL_SEQ
+    _GLOBAL_VLM_CALL_SEQ += 1
+    return _GLOBAL_VLM_CALL_SEQ
+
+
 class VideoSeekLaveRunner:
     """Runs matched Vanilla VideoSeek and VideoSeek + LAVE trajectories on a single video."""
 
@@ -396,8 +405,8 @@ class VideoSeekLaveRunner:
         images, ts_actual = decode_frames_pyav(
             video_path, ts_req, short_side=self.cfg.overview_short_side, max_pixels=self.cfg.focus_max_pixels
         )
-        self._vlm_call_seq += 1
-        ov_uid = self._vlm_call_seq
+        ov_uid = _next_vlm_call_uid()
+        self._vlm_call_seq = ov_uid
         content = [
             {
                 "type": "text",
@@ -498,8 +507,8 @@ class VideoSeekLaveRunner:
             )
             max_tok = self.cfg.focus_max_tokens
 
-        self._vlm_call_seq += 1
-        call_uid = self._vlm_call_seq
+        call_uid = _next_vlm_call_uid()
+        self._vlm_call_seq = call_uid
         content = [{"type": "text", "text": f"[Clip #{call_uid}] Inspected video frames ({window_note}):\n"}]
         for img, ts in zip(images, ts_actual):
             content.append({"type": "text", "text": f"{ts:.1f}s:"})
