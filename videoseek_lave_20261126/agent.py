@@ -338,6 +338,7 @@ class VideoSeekLaveRunner:
             focus_num_frames=self.cfg.focus_frames,
             focus_max_span=int(self.cfg.focus_max_span),
         )
+        self._vlm_call_seq = 0
 
     def run_shared_overview(self, video_path, duration):
         """Execute official Step-1 overview once and capture 32 post-merger visual slots for free."""
@@ -345,11 +346,13 @@ class VideoSeekLaveRunner:
         images, ts_actual = decode_frames_pyav(
             video_path, ts_req, short_side=self.cfg.overview_short_side, max_pixels=self.cfg.focus_max_pixels
         )
+        self._vlm_call_seq += 1
+        ov_uid = self._vlm_call_seq
         content = [
             {
                 "type": "text",
                 "text": (
-                    f"The video spans 0.0s - {duration:.1f}s. Below are {len(images)} uniformly sampled frames "
+                    f"[Overview #{ov_uid}] The video spans 0.0s - {duration:.1f}s. Below are {len(images)} uniformly sampled frames "
                     "with their exact timestamps.\n"
                 ),
             }
@@ -445,25 +448,17 @@ class VideoSeekLaveRunner:
             )
             max_tok = self.cfg.focus_max_tokens
 
-        content = [{"type": "text", "text": f"Inspected video frames ({window_note}):\n"}]
+        self._vlm_call_seq += 1
+        call_uid = self._vlm_call_seq
+        content = [{"type": "text", "text": f"[Clip #{call_uid}] Inspected video frames ({window_note}):\n"}]
         for img, ts in zip(images, ts_actual):
             content.append({"type": "text", "text": f"{ts:.1f}s:"})
             content.append({"type": "image"})
         content.append({"type": "text", "text": prompt_tail})
 
-        try:
-            out = self.engine.generate_vlm_with_capture(
-                [{"role": "user", "content": content}], images, max_tokens=max_tok
-            )
-        except RuntimeError as exc:
-            if "No visual prefill captured" not in str(exc):
-                raise
-            # Prefix cache hit skipped prefill; add a minimal step tag so prefill captures slots cleanly
-            tagged = list(content)
-            tagged[0] = {"type": "text", "text": f"[Step {step_id}] Inspected video frames ({window_note}):\n"}
-            out = self.engine.generate_vlm_with_capture(
-                [{"role": "user", "content": tagged}], images, max_tokens=max_tok
-            )
+        out = self.engine.generate_vlm_with_capture(
+            [{"role": "user", "content": content}], images, max_tokens=max_tok
+        )
         entries = [
             dict(
                 slot=out["slots"][i],
