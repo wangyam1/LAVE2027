@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 import sys
-from time import perf_counter
+from time import perf_counter, time
 
 os.environ.setdefault("VLLM_ENABLE_V1_MULTIPROCESSING", "0")
 os.environ.setdefault("VLLM_ALLOW_INSECURE_SERIALIZATION", "1")
@@ -104,7 +104,16 @@ def run_shard(expected_pin, shard_id, num_shards, gpu_idx, gpu_mem_util=0.90, ma
             mm_processor_kwargs={"size": {"shortest_edge": 65536, "longest_edge": 262144}},
         )
         runner = VideoSeekLaveRunner(engine, AgentConfig(max_steps=int(max_steps)))
+        deadline_epoch = float(os.environ.get("LAVE_DEADLINE_EPOCH", "0") or "0")
+        stopped_early = False
         for ordinal, case in pending:
+            if deadline_epoch > 0 and time() >= deadline_epoch:
+                print(
+                    json.dumps(dict(status="deadline_reached", shard=shard_id, done=len(done_rows), assigned=len(assigned))),
+                    flush=True,
+                )
+                stopped_early = True
+                break
             t0 = perf_counter()
             rec = runner.run_case_paired(case, ordinal)
             rec["duration_bucket"] = case["duration_bucket"]
@@ -136,22 +145,23 @@ def run_shard(expected_pin, shard_id, num_shards, gpu_idx, gpu_mem_util=0.90, ma
                 flush=True,
             )
 
-    term = dict(
-        status="complete",
-        shard=shard_id,
-        num_shards=num_shards,
-        pin=actual_pin,
-        labels=0,
-        gpu_idx=str(gpu_idx),
-        pid=os.getpid(),
-        cases=len(done_rows),
-        rows=done_rows,
-    )
-    tsha = write_json_canonical(case_dir / f"shard_{shard_id}.terminal.json", term)
-    print(
-        json.dumps(dict(status="shard_complete", shard=shard_id, terminal_sha256=tsha, cases=len(done_rows))),
-        flush=True,
-    )
+    if not (pending and stopped_early):
+        term = dict(
+            status="complete",
+            shard=shard_id,
+            num_shards=num_shards,
+            pin=actual_pin,
+            labels=0,
+            gpu_idx=str(gpu_idx),
+            pid=os.getpid(),
+            cases=len(done_rows),
+            rows=done_rows,
+        )
+        tsha = write_json_canonical(case_dir / f"shard_{shard_id}.terminal.json", term)
+        print(
+            json.dumps(dict(status="shard_complete", shard=shard_id, terminal_sha256=tsha, cases=len(done_rows))),
+            flush=True,
+        )
 
 
 if __name__ == "__main__":
