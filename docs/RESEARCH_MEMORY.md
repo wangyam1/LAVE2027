@@ -6,6 +6,18 @@
 
 ## 当前交接
 
+**2026-11-26 晚至 2026-11-27 早三卡 A40 通宵实验全量关账，全部占用 GPU（GPU 0/1/2）已于 07:45:39 CST 准时自动归零释放（`0 MiB`, `0%`，提前 14 分钟归还，全程未触碰 GPU 3），所有封存评分回执已同步至 `wangyam1/LAVE2027`。**
+- **Video-MME 216 多步评测（`score_mme.json`: `df6f2fad...`）**：216 独立视频（Short 72 / Medium 72 / Long 72，12 题型均衡），`vanilla_text 125/216 (57.87%)` → `lave_route_text 131 (60.65%, +2.78 pp)` → **`lave_full 138 (63.89%, +26/−13, +6.02 pp, p = 0.053)`** → **`vanilla_latent_qa 141 (65.28%, +23/−7, +7.41 pp, p = 0.00522)`**；Short/Medium/Long **全三档零回退**，同时 LAVE 减少视觉调用 **`−8.7%`**（`3.04 vs 3.33`）与采样帧数 `64.67 vs 69.26`（`440/441` 控制通过）。
+- **LongVideoBench-150 多步评测（`score_lvb150_multistep.json`: `cf8d73d0...`）**：沿用冻结 `PIN 27b9d833...`（150 题 / 146 独立长视频 / 17 类），`lave_route_text` **`87/150 (58.00%)`** vs `vanilla_text 85/150 (56.67%)`（`+1.33 pp`），其中 **超长 1 小时分桶（`dg=3600`, `n=101`）大涨 `+5.94 pp`（`59.41% vs 53.47%`）**；均题视觉调用 `−6.0%`（`4.73 vs 5.03`）、帧数 `−4.8`（`91.63 vs 96.43`）。三大多步基准合并（`N = 506`）：`vanilla_text 49.41%` → `lave_route_text 52.96% (+3.56 pp)` / `lave_full 53.36% (+3.95 pp)`，且 3/3 基准全部同步省步数、省调用、省帧数。
+- **Video-Holmes eval140 审稿人反杀基线与独立无共享延迟审计（`score_baselines_eval140.json`: `a869553e...`，正面回应 LARVA ICLR 2027 撤稿审稿人核心质疑）**：
+  - **`VideoSeek-Image`（直传原始像素帧多轮交错）**：`40/140 (28.57%)`（与 `vanilla_text` 持平 `+0.00 pp`，累计喂入 `216.7` 帧 / `44,953` prompt tokens 且被迫裁剪 `49.1` 帧）——`lave_route_text (35.71%)` 与 `lave_full (34.29%)` 分别领先 **`+7.14 pp` / `+5.71 pp`**；
+  - **`Clock-Split`（等预算 50/50 几何切分）**：`48/140 (34.29%)`、`clock_split_uniform_qa 46/140 (32.86%)`——LAVE 在 Mech A（`35.71% vs 34.29%`）与 Mech B（`34.29% vs 32.86%`）双双胜出且更省调用和帧数；
+  - **28 题无共享端到端延迟审计**：`lave_route_text` 实测 **`70.81 s`**，**直接快于 `vanilla_text`（`70.95 s`）**——`7.76 s` 零像素探测开销被 **`−18.3%` 视觉调用（`3.18 vs 3.89`）** 与 **`−14.6%` 帧数（`66.86 vs 78.29`）** 完全抵消！
+- **多规模 / 跨架构 / Thinking 模式泛化（全在同套冻结 `Video-Holmes eval140` 上验证，零魔改原生 vLLM 0.19.0）**：
+  - **`Qwen3.5-4B`（`score_qwen35_4b.json`: `482060fa...`, `N=140`）**：`vanilla_text 25.00%` → `lave_route_text 25.71%` → `lave_full 27.86% (+2.86 pp)` → **`vanilla_latent_qa 52/140 (37.14%, +22/−5, +12.14 pp, p = 0.00151)`**（4B 零像素读出反超 9B 纯文本 VideoSeek `28.57%` 达 `+8.57 pp`！）；
+  - **`Qwen2.5-VL-7B-Instruct`（`score_qwen25vl_7b.json`: `e6593786...`, `N=140`, 纯 Transformer 架构 + LARVA 同基座）**：`vanilla_text 15.71%` → `lave_route_text 17.14% (+1.43 pp)` → **`lave_full 40/140 (28.57%, +24/−6, +12.86 pp, p = 0.00143)`**，视觉调用 `−7.8%`，Receiver 仅 **`1.29 s/case`**、0 视觉回放；
+  - **`Qwen3.5-9B-Thinking`（`score_qwen35_9b_thinking.json`: `88a8f385...`, `N=46` 均衡前缀，07:43 准时硬停）**：严格单调四臂阶梯 `23.91% → 26.09% → 30.43% → 32.61%`（`lave_full vs vanilla_text +6/−2, +8.70 pp`; `vs v_lat +3/−0, +6.52 pp`），视觉调用 `−7.3%`、`−5.9` 帧、`164/164` 控制全过。
+
 **Video-Holmes 140 独立长视频多步 VideoSeek + LAVE 全量对齐评测（`videoseek_lave_20261126`，`eval140` + `pilot14`）已在单卡 A40 GPU 1 上全量跑完、释放显存至 `0 MiB`（`gpu_released: true`），完成 CPU 单次解封评分（`score_eval140.json`: `276bb198...`）并推送至 Private GitHub 仓库 `wangyam1/LAVE2027`。**
 - **设置与效率**：`eval140` 覆盖 **140 题 / 140 个独立视频**（7 类严格每类 20 题，与 `pilot14` 零重叠），采用官方多步 VideoSeek 协议（`overview / skim / focus / answer`，`max_steps = 6`）、100% Training-Free 冻结 `Qwen3.5-9B` + 原生免魔改 vLLM 0.19.0、**纯单视频三项自检（零跨视频 foil，通过率 `385/385 = 100%`）**，Receiver 与 Top-8 零像素隐状态核验均严格断言 `visual_forwards == 0`。均题步数/视觉调用/帧数：`Vanilla 4.66 步 / 3.86 次 / 77.71 帧` → **`LAVE 4.64 步 / 3.75 次 / 76.00 帧`**（Receiver 均耗时 `10.26s`）；`pilot14`（14 题）上 `lave_route_text` 在持平准确率 `8/14 (57.1%)` 下减少 **`−22.6%` 视觉调用、`−17.5%` 帧数**（`72.0 → 59.4` 帧）。
 - **全量 140 题准确率（`max_steps = 6`）**：

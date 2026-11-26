@@ -33,7 +33,12 @@ All evaluations use frozen **`Qwen3.5-9B`** (`temperature=0.0`, `thinking=False`
 | **LongVideoBench-150** *(All 17 Cats)* | **150 (146 vids)** | Qwen3.5-9B (**vLLM 0.19.0**) | **Direct Visual QA (Focus-1+2)** | 83/150 (`55.3%`) | 85/150 (`56.7%`) | **87/150 (`58.0%`)** | **+5 / −1** (**`+2.67 pp`**, `p = 0.219`; **0/17 category regressions**) | [score.json](results/longvideobench_150/score.json) |
 | **LongVideoBench-150** *(Routed Subset)* | 108 routed | Qwen3.5-9B (**vLLM 0.19.0**) | Direct Visual QA (Focus-1+2) | 67/108 (`62.0%`) | 69/108 (`63.9%`) | **71/108 (`65.7%`)** | **+5 / −1** (**`+3.70 pp`**; vs pure-text `text` `53.3%` → **`+4.67 pp` total**) | [notes.md](results/longvideobench_150/notes.md) |
 | **Video-Holmes Pilot** *(Multi-Step VideoSeek+LAVE)* | 14 (14 vids, 7×2) | Qwen3.5-9B (**vLLM 0.19.0**) | Multi-Step (`max_steps=6`) Acc / Frames / Calls | `8/14 (57.1%)` (`72.0f`, `3.50` calls, `4.36` st) | — | **`8/14 (57.1%)`** (**`59.4f` −17.5%**, **`2.71` calls −22.6%**, `3.71` st) | Same accuracy (`+0/−0`) with **12.6 fewer frames** & **−22.6% visual calls** (`24/24` controls) | [score_pilot14.json](results/video_holmes/score_pilot14.json) |
-| **Video-Holmes Eval** *(Multi-Step VideoSeek+LAVE)* | **140 (140 vids, 7×20)** | Qwen3.5-9B (**vLLM 0.19.0**) | **Multi-Step (`max_steps=6`) Overall / Rerouted** | `40/140 (28.6%)` / `36/115 (31.3%)` (`77.7f`, `3.86` calls) | — | **`50/140 (35.7%)`** / **`46/115 (40.0%)`** (**`76.0f`**, **`3.75` calls**) | **+18 / −8** (**`+7.14 pp`**, 2-sided `p = 0.0755`, 1-sided `p = 0.0378`; **6/7 categories win!**) | [score_eval140.json](results/video_holmes/score_eval140.json) |
+| **Video-Holmes Eval** *(Multi-Step VideoSeek+LAVE)* | **140 (140 vids, 7×20)** | Qwen3.5-9B (**vLLM 0.19.0**) | **Multi-Step (`max_steps=6`) Overall / Rerouted** | `40/140 (28.6%)` (`77.7f`, `3.86` calls) | `48/140 (34.3%)` (`77.9f`, `3.87` calls) | **`50/140 (35.7%)`** / `lave_full 48 (34.3%)` (**`76.0f`**, **`3.75` calls**) | **+18 / −8** (**`+7.14 pp`**, 2-sided `p = 0.0755`, 1-sided `p = 0.0378`; beats `VideoSeek-Image` `28.6%` by **`+7.14 pp`**) | [score_eval140.json](results/video_holmes/score_eval140.json) |
+| **Video-MME 216** *(72S / 72M / 72L, 12 tasks)* | **216 unique vids** | Qwen3.5-9B (**vLLM 0.19.0**) | **Multi-Step (`max_steps=6`) Overall (S / M / L)** | `125/216 (57.9%)` (`77.8 / 55.6 / 40.3`) | — | **`lave_full 138 (63.9%)`** / **`v_lat 141 (65.3%)`** / `l_rt 131 (60.6%)` (**`64.7f`**, **`3.04` calls −8.7%**) | `lave_full` **+26/−13 (`+6.02 pp`, `p = 0.053`)**; `v_lat` **+23/−7 (`+7.41 pp`, `p = 0.0052`)**; **0/3 duration regressions** | [score_mme.json](results/videomme_216/score_mme.json) |
+| **LongVideoBench-150** *(Multi-Step, 17 cats)* | **150 (146 vids)** | Qwen3.5-9B (**vLLM 0.19.0**) | **Multi-Step (`max_steps=6`) Overall / 1h (`dg=3600`, `n=101`)** | `85/150 (56.7%)` / `53.5%` (`96.4f`, `5.03` calls) | — | **`l_rt 87/150 (58.0%)`** / **`59.4% (+5.94 pp)`** (**`91.6f`**, **`4.73` calls −6.0%**) | **`+5.94 pp`** on ultra-long 1-hour videos with **−6.0% visual calls** & **−4.8 frames** | [score_lvb150_multistep.json](results/lvb150_multistep/score_lvb150_multistep.json) |
+| **Video-Holmes Cross-Scale** | **140 unique vids** | **`Qwen3.5-4B`** (**vLLM 0.19.0**) | Multi-Step (`max_steps=6`) Acc | `35/140 (25.0%)` (`72.2f`, `3.51` calls) | — | `l_full 39 (27.9%)` / **`v_lat 52/140 (37.1%)`** (**`69.5f`**, **`3.34` calls**) | `v_lat` **+22 / −5 (`+12.14 pp`, `p = 0.00151`)** — beats frozen 9B text VideoSeek (`28.6%`) by **`+8.57 pp`**! | [score_qwen35_4b.json](results/video_holmes/score_qwen35_4b.json) |
+| **Video-Holmes Cross-Architecture** | **140 unique vids** | **`Qwen2.5-VL-7B-Instruct`** *(Pure Transformer)* | Multi-Step (`max_steps=6`) Acc | `22/140 (15.7%)` (`48.8f`, `2.05` calls) | — | `l_rt 24 (17.1%)` / **`l_full 40/140 (28.6%)`** (**`46.3f`**, **`1.89` calls −7.8%**, `rx=1.29s`) | **`lave_full` +24 / −6 (`+12.86 pp`, `p = 0.00143`)** with **−7.8% visual calls** & 0 vision replay | [score_qwen25vl_7b.json](results/video_holmes/score_qwen25vl_7b.json) |
+| **Video-Holmes Thinking Mode** | 46 balanced prefix | **`Qwen3.5-9B-Thinking`** (`enable_thinking=True`) | Multi-Step (`max_steps=6`) Acc | `11/46 (23.9%)` (`95.0f`, `4.93` calls) | — | `l_rt 14 (30.4%)` / **`l_full 15/46 (32.6%)`** (**`89.0f`**, **`4.57` calls −7.3%**) | Strict monotonic ladder: `23.9% → 26.1% → 30.4% → 32.6%` (**`+8.70 pp`**, `l_full vs v_lat +3/−0`) | [score_qwen35_9b_thinking.json](results/video_holmes/score_qwen35_9b_thinking.json) |
 
 ---
 
@@ -113,9 +118,34 @@ Frozen blind cohort (`140` questions across `140` unique videos, balanced `20` p
 
 *(Anytime Step-4 checkpoint: `vanilla_step4 = 52/140 (37.1%)` degrades `−8.57 pp` to `28.6%` by Step 6 under late-step blind-search drift, whereas `lave_step4 = 49/140 (35.0%)` improves `+0.71 pp` to `35.7%` by Step 6. See [results/video_holmes/notes.md](results/video_holmes/notes.md).)*
 
+**Direct-Visual (`VideoSeek-Image`), Equal-Budget (`Clock-Split`), & Unshared Standalone Latency Audit (`results/video_holmes/score_baselines_eval140.json`)**:
+
+| Method (`N = 140` Video-Holmes, `Qwen3.5-9B`) | Accuracy (`N = 140`) | vs `vanilla_text` | Mean Frames (Fed to VLM) | Unshared Standalone Latency (`n = 28`) |
+| :--- | :---: | :---: | :---: | :---: |
+| `vanilla_text` (Caption VideoSeek) | `40 / 140` (`28.57%`) | baseline | `77.71` | `70.95 s` (`3.89` vcalls, `78.3f`) |
+| **`videoseek_image`** *(Direct Raw-Pixel Interleaved)* | `40 / 140` (`28.57%`) | `+0.00 pp` | `75.31` (**`216.69` fed**, `44,953` prompt tok, `49.1` pruned) | `33.44 s` *(no captioner, severe visual context overflow)* |
+| `clock_split_text` *(Equal-Budget Geometric 50/50)* | `48 / 140` (`34.29%`) | `+5.71 pp` | `77.94` | — |
+| `clock_split_uniform_qa` *(Uniform 8-Frame 0-Pixel QA)* | `46 / 140` (`32.86%`) | `+4.29 pp` | `77.94` | — |
+| **`lave_full`** *(Mech A Route + Mech B 0-Pixel Verify)* | **`48 / 140` (`34.29%`)** | **`+5.71 pp`** *(vs `VideoSeek-Image` `+5.71 pp`; vs `Clock-Uniform` `+1.43 pp`)* | **`76.00`** | `77.57 s` *(faster than `v_lat 78.33 s`)* |
+| **`lave_route_text`** *(Mech A: LAVE Visual-State Routing)* | **`50 / 140` (`35.71%`)** | **`+7.14 pp`** *(vs `VideoSeek-Image` `+7.14 pp`; vs `Clock-Split` `+1.43 pp`)* | **`76.00`** | **`70.81 s` (FASTER than `vanilla_text`! `−18.3%` vcalls, `−14.6%` frames)** |
+
 ---
 
-### 6. Native vLLM 0.19.0 Parity & Speedup Benchmark (`results/vllm_parity/bench_vllm_b33.json`)
+### 6. Video-MME 216 & Multi-Step LongVideoBench-150 (`results/videomme_216/`, `results/lvb150_multistep/`)
+
+- **Video-MME 216** (`72` Short + `72` Medium + `72` Long, balanced across all 12 tasks & 6 domains, `score_mme.json` SHA `df6f2fad...`):
+  - `vanilla_text`: `125/216 (57.87%)` (`Short 77.78% / Medium 55.56% / Long 40.28%`; `4.11` st / `3.33` vcalls / `69.26` f)
+  - `lave_route_text` (+Mech A): `131/216 (60.65%, +2.78 pp)` (`79.17% / 61.11% / 41.67%`; **`3.88` st / `3.04` vcalls −8.7% / `64.67` f**)
+  - **`lave_full` (+Mech A+B)**: **`138/216 (63.89%, +26/−13, +6.02 pp, p = 0.053)`** (`81.94% / 63.89% / 45.83%`; **`3.04` vcalls −8.7%**)
+  - **`vanilla_latent_qa` (+Mech B)**: **`141/216 (65.28%, +23/−7, +7.41 pp, p = 0.00522)`** (`80.56% / 63.89% / 51.39%`)
+- **LongVideoBench-150 Multi-Step** (`max_steps=6`, frozen `PIN 27b9d833...`, `score_lvb150_multistep.json` SHA `cf8d73d0...`):
+  - `lave_route_text` **`87/150 (58.00%)`** vs `vanilla_text` `85/150 (56.67%)` (`+1.33 pp`), driven by **`+5.94 pp` on ultra-long 1-hour videos (`dg=3600`, `n=101`: `59.41% vs 53.47%`)**, cutting visual calls **`−6.0%`** (`4.73 vs 5.03`) and frames `−4.8` (`91.63 vs 96.43`).
+- **Pooled Multi-Step Summary Across All 3 Benchmarks (`N = 506` Unique Long Videos, Frozen `Qwen3.5-9B`)**:
+  - `vanilla_text`: `250 / 506 (49.41%)` → `lave_route_text`: **`268 / 506 (52.96%, +3.56 pp)`** → `vanilla_latent_qa`: **`269 / 506 (53.16%, +3.75 pp)`** → **`lave_full`: `270 / 506 (53.36%, +3.95 pp)`**, with **fewer steps, fewer visual calls, and fewer frames on 3/3 benchmarks**!
+
+---
+
+### 7. Native vLLM 0.19.0 Parity & Speedup Benchmark (`results/vllm_parity/bench_vllm_b33.json`)
 
 4-case A40 benchmark (`case_16 / 06 / 20 / 38`, frozen `Qwen3.5-9B`, zero vLLM source patches, `forbid_vision_hook` enforcing `0` vision calls in Receiver):
 
