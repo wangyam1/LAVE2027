@@ -390,7 +390,32 @@ class VideoSeekLaveRunner:
             seconds=out["seconds"],
         )
 
-    def _exec_skim_or_focus(self, tool_name, video_path, duration, query, timestamps_s, step_id, window_note):
+    def _exec_skim_or_focus(
+        self,
+        tool_name,
+        video_path,
+        duration,
+        query,
+        timestamps_s,
+        step_id,
+        window_note,
+        *,
+        tool_cache=None,
+    ):
+        cache_key = (tool_name, tuple(round(float(t), 2) for t in timestamps_s), query.strip())
+        if tool_cache is not None and cache_key in tool_cache:
+            cached = tool_cache[cache_key]
+            reused_entries = [dict(e, step_id=step_id) for e in cached["bank_entries"]]
+            return dict(
+                text=cached["text"],
+                timestamps=list(cached["timestamps"]),
+                bank_entries=reused_entries,
+                frames=cached["frames"],
+                vision_calls=0,
+                seconds=0.0,
+                cache_reused=True,
+            )
+
         if tool_name == "skim":
             images, ts_actual = decode_frames_pyav(
                 video_path,
@@ -426,9 +451,19 @@ class VideoSeekLaveRunner:
             content.append({"type": "image"})
         content.append({"type": "text", "text": prompt_tail})
 
-        out = self.engine.generate_vlm_with_capture(
-            [{"role": "user", "content": content}], images, max_tokens=max_tok
-        )
+        try:
+            out = self.engine.generate_vlm_with_capture(
+                [{"role": "user", "content": content}], images, max_tokens=max_tok
+            )
+        except RuntimeError as exc:
+            if "No visual prefill captured" not in str(exc):
+                raise
+            # Prefix cache hit skipped prefill; add a minimal step tag so prefill captures slots cleanly
+            tagged = list(content)
+            tagged[0] = {"type": "text", "text": f"[Step {step_id}] Inspected video frames ({window_note}):\n"}
+            out = self.engine.generate_vlm_with_capture(
+                [{"role": "user", "content": tagged}], images, max_tokens=max_tok
+            )
         entries = [
             dict(
                 slot=out["slots"][i],
@@ -439,14 +474,18 @@ class VideoSeekLaveRunner:
             )
             for i in range(len(ts_actual))
         ]
-        return dict(
+        res = dict(
             text=out["text"].strip(),
             timestamps=ts_actual,
             bank_entries=entries,
             frames=len(ts_actual),
             vision_calls=out["vision_calls"],
             seconds=out["seconds"],
+            cache_reused=False,
         )
+        if tool_cache is not None:
+            tool_cache[cache_key] = res
+        return res
 
     def _score_bank_and_controls(self, bank, question_text, query, trajectory_brief, seed_idx):
         """Run zero-pixel Calibrated-Lift Receiver + pure single-video self-controls on bank."""
@@ -566,7 +605,7 @@ class VideoSeekLaveRunner:
             seconds=round(score_res["seconds"] + gen["seconds"], 3),
         )
 
-    def _run_trajectory(self, case, shared_overview, *, use_lave_routing: bool, seed_base: int):
+    def _run_trajectory(self, case, shared_overview, *, use_lave_routing: bool, seed_base: int, tool_cache=None):
         """Run one full multi-step VideoSeek trajectory (vanilla or LAVE-routed) + latent readout."""
         t_start = perf_counter()
         question_text, valid_letters = format_mc_question(case["question"], case["options"])
@@ -801,7 +840,7 @@ class VideoSeekLaveRunner:
                 window_note = f"{p_start:.1f}s-{p_end:.1f}s"
 
             tool_out = self._exec_skim_or_focus(
-                tname, video_path, duration, query, ts_req, step_id, window_note
+                tname, video_path, duration, query, ts_req, step_id, window_note, tool_cache=tool_cache
             )
             bank.extend(tool_out["bank_entries"])
             total_frames += tool_out["frames"]
@@ -881,8 +920,13 @@ class VideoSeekLaveRunner:
         """Run matched Vanilla VideoSeek and VideoSeek + LAVE on one case with shared Step-1 overview."""
         t0 = perf_counter()
         shared_ov = self.run_shared_overview(case["video_path"], float(case["duration"]))
-        vanilla = self._run_trajectory(case, shared_ov, use_lave_routing=False, seed_base=ordinal)
-        lave = self._run_trajectory(case, shared_ov, use_lave_routing=True, seed_base=ordinal)
+        tool_cache = {}
+        vanilla = self._run_trajectory(
+            case, shared_ov, use_lave_routing=False, seed_base=ordinal, tool_cache=tool_cache
+        )
+        lave = self._run_trajectory(
+            case, shared_ov, use_lave_routing=True, seed_base=ordinal, tool_cache=tool_cache
+        )
         return dict(
             cid=case["id"],
             ordinal=ordinal,
