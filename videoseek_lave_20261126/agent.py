@@ -309,11 +309,11 @@ class AgentConfig:
     overview_short_side: int = 256
     skim_short_side: int = 256
     focus_max_pixels: int = 262144
-    latent_qa_frames: int = 16
+    latent_qa_frames: int = 8
     max_bank_scan: int = 48
     specificity_margin: float = 0.25
-    overview_max_tokens: int = 1024
-    skim_max_tokens: int = 768
+    overview_max_tokens: int = 768
+    skim_max_tokens: int = 640
     focus_max_tokens: int = 512
     thought_max_tokens: int = 384
     parser_max_tokens: int = 160
@@ -562,8 +562,10 @@ class VideoSeekLaveRunner:
             seconds=round(res["seconds"] + scram_s, 3),
         )
 
-    def _run_latent_readout_answer(self, bank, question_text, valid_letters, trajectory_brief):
-        """Mechanism B: zero-pixel visual answering directly over top-M cached post-merger states."""
+    def _run_latent_readout_answer(
+        self, bank, question_text, valid_letters, trajectory_brief, *, planner_reasoning=""
+    ):
+        """Mechanism B: zero-pixel visual verification directly over top-M cached post-merger states."""
         # Score entire bank against the question + options using 0 vision calls
         prompt_rx, (y_id, n_id) = render_lave_receiver_prompt(
             self.engine.tokenizer,
@@ -585,7 +587,12 @@ class VideoSeekLaveRunner:
         sel_meta = [dict(timestamp_s=bank[i]["timestamp_s"], tool=bank[i]["tool"]) for i in picked_idx]
 
         qa_prompt = render_latent_readout_prompt(
-            self.engine.tokenizer, question_text, valid_letters, sel_meta, trajectory_brief
+            self.engine.tokenizer,
+            question_text,
+            valid_letters,
+            sel_meta,
+            trajectory_brief,
+            planner_reasoning=planner_reasoning,
         )
         gen = self.engine.generate_from_visual_embeds(
             qa_prompt, sel_slots, sel_grids, max_tokens=self.cfg.answer_max_tokens
@@ -671,6 +678,8 @@ class VideoSeekLaveRunner:
 
         final_text_answer = None
         final_text_raw = ""
+        step4_text_answer = None
+        step4_frames = None
         finish_reason = "reach_max_steps"
 
         for step_id in range(2, self.cfg.max_steps + 1):
@@ -873,6 +882,21 @@ class VideoSeekLaveRunner:
                     seconds=tool_out["seconds"],
                 )
             )
+            # Anytime Step-4 checkpoint (official VideoSeek default max_steps=4) without disturbing trajectory
+            if step_id == 4 and step4_text_answer is None and self.cfg.max_steps > 4:
+                s4_msgs = list(messages) + [
+                    {
+                        "role": "user",
+                        "content": (
+                            "You have reached the maximum number of steps.\n"
+                            f"Question:\n{question_text}\n\n"
+                            f"Respond with ONLY the single best option letter ({', '.join(valid_letters)})."
+                        ),
+                    }
+                ]
+                s4_out = self.engine.generate_text(s4_msgs, max_tokens=self.cfg.answer_max_tokens)
+                step4_text_answer = extract_choice_letter(s4_out["text"].strip(), valid_letters)
+                step4_frames = total_frames
 
         # If max_steps reached without calling answer -> force final pure-text answer (official VideoSeek)
         if final_text_answer is None:
@@ -890,11 +914,20 @@ class VideoSeekLaveRunner:
             final_text_raw = ans_out["text"].strip()
             final_text_answer = extract_choice_letter(final_text_raw, valid_letters)
 
-        # Mechanism B: Zero-pixel Latent-Retrieved Visual Answering directly over the trajectory's cached bank
+        if step4_text_answer is None:
+            step4_text_answer = final_text_answer
+            step4_frames = total_frames
+
+        # Mechanism B: Zero-pixel Latent-Retrieved Visual Verification preserving Planner's multi-step reasoning
         traj_brief = "\n\n".join(
-            m["content"][:900] for m in messages if m["role"] == "user" and m["content"].startswith("Observation")
+            m["content"][:1200] for m in messages if m["role"] == "user" and m["content"].startswith("Observation")
         )
-        latent_qa = self._run_latent_readout_answer(bank, question_text, valid_letters, traj_brief)
+        planner_thoughts = "\n\n".join(
+            m["content"][:600] for m in messages if m["role"] == "assistant"
+        )
+        latent_qa = self._run_latent_readout_answer(
+            bank, question_text, valid_letters, traj_brief, planner_reasoning=planner_thoughts
+        )
 
         return dict(
             use_lave_routing=use_lave_routing,
@@ -902,6 +935,7 @@ class VideoSeekLaveRunner:
             num_steps=len(steps_log),
             visual_tool_calls=visual_tool_calls,
             total_frames=total_frames,
+            step4_frames=step4_frames,
             bank_size=len(bank),
             total_vision_calls=total_vision_calls,
             control_scans=control_scans,
@@ -910,6 +944,7 @@ class VideoSeekLaveRunner:
             receiver_forwards=receiver_forwards,
             receiver_seconds=round(receiver_seconds, 3),
             text_answer=final_text_answer,
+            step4_text_answer=step4_text_answer,
             text_answer_raw=final_text_raw,
             latent_qa=latent_qa,
             steps=steps_log,
@@ -943,8 +978,10 @@ class VideoSeekLaveRunner:
             lave=lave,
             answers=dict(
                 vanilla_text=vanilla["text_answer"],
+                vanilla_step4=vanilla["step4_text_answer"],
                 vanilla_latent_qa=vanilla["latent_qa"]["answer"],
                 lave_route_text=lave["text_answer"],
+                lave_step4=lave["step4_text_answer"],
                 lave_full=lave["latent_qa"]["answer"],
             ),
             elapsed_seconds=round(perf_counter() - t0, 3),

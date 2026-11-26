@@ -185,12 +185,23 @@ def render_lave_receiver_prompt(tokenizer, question_text, query, trajectory_brie
     return rendered, tuple(labels)
 
 
-def render_latent_readout_prompt(tokenizer, question_text, valid_letters, selected_meta, trajectory_brief):
-    """Build zero-pixel multi-frame latent visual QA prompt over M cached post-merger states."""
+def render_latent_readout_prompt(
+    tokenizer,
+    question_text,
+    valid_letters,
+    selected_meta,
+    trajectory_brief,
+    *,
+    planner_reasoning="",
+):
+    """Build zero-pixel multi-frame latent visual verification prompt over top-M cached states + full reasoning."""
     clean_q = question_text.replace("<|", "")
     clean_brief = (trajectory_brief or "").replace("<|", "")
-    if len(clean_brief) > 3200:
-        clean_brief = clean_brief[-3200:]
+    if len(clean_brief) > 4000:
+        clean_brief = clean_brief[:1800] + "\n...\n" + clean_brief[-2000:]
+    clean_reason = (planner_reasoning or "").replace("<|", "").strip()
+    if len(clean_reason) > 1500:
+        clean_reason = clean_reason[-1500:]
 
     frame_lines = []
     for item in selected_meta:
@@ -200,12 +211,16 @@ def render_latent_readout_prompt(tokenizer, question_text, valid_letters, select
     frames_block = "\n".join(frame_lines)
     letters_str = ", ".join(valid_letters)
 
+    reason_block = f"Agent's multi-step reasoning so far:\n{clean_reason}\n\n" if clean_reason else ""
+
     user_msg = (
-        f"Retrieved key visual frames from the video (in chronological order):\n"
+        f"Top retrieved key visual frames from the video (chronological):\n"
         f"{frames_block}\n\n"
-        f"Text observations collected during search:\n{clean_brief}\n\n"
+        f"Collected text observations:\n{clean_brief}\n\n"
+        f"{reason_block}"
         f"Question:\n{clean_q}\n\n"
-        f"Carefully rely on the visual evidence in the frames above together with the timeline. "
+        f"Verify the multi-step reasoning directly against the retrieved visual frames above. "
+        f"Keep the reasoned choice if the frames agree, or correct it if the frames show clearer direct visual evidence. "
         f"Respond with ONLY the single best option letter ({letters_str}) and nothing else."
     )
     rendered = tokenizer.apply_chat_template(
@@ -213,9 +228,9 @@ def render_latent_readout_prompt(tokenizer, question_text, valid_letters, select
             {
                 "role": "system",
                 "content": (
-                    "You are an expert multimodal video reasoning assistant. "
-                    "Answer the multiple-choice question by directly inspecting the provided visual frames "
-                    "and cross-checking with the collected observations. Output ONLY a single uppercase option letter."
+                    "You are an expert multimodal video reasoning verifier. "
+                    "Integrate the agent's multi-step causal reasoning with direct visual inspection of the retrieved frames. "
+                    "Output ONLY a single uppercase option letter."
                 ),
             },
             {"role": "user", "content": user_msg},

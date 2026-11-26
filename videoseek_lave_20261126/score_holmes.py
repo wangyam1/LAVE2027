@@ -12,11 +12,12 @@ from .holmes_inputs import HOLMES_JSON, sha256_bytes, write_json_canonical
 
 ROOT = Path(".")
 ACTION = ROOT / "action"
-ARMS = ("vanilla_text", "vanilla_latent_qa", "lave_route_text", "lave_full")
+ARMS = ("vanilla_text", "vanilla_step4", "vanilla_latent_qa", "lave_route_text", "lave_step4", "lave_full")
 PAIRS = (
     ("lave_full", "vanilla_text"),
     ("lave_full", "vanilla_latent_qa"),
     ("lave_route_text", "vanilla_text"),
+    ("lave_step4", "vanilla_step4"),
     ("vanilla_latent_qa", "vanilla_text"),
     ("lave_full", "lave_route_text"),
 )
