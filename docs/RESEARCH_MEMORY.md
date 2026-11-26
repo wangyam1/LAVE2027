@@ -6,6 +6,14 @@
 
 ## 当前交接
 
+**Video-Holmes 140 独立长视频多步 VideoSeek + LAVE 全量对齐评测（`videoseek_lave_20261126`，`eval140` + `pilot14`）已在单卡 A40 GPU 1 上全量跑完、释放显存至 `0 MiB`（`gpu_released: true`），完成 CPU 单次解封评分（`score_eval140.json`: `276bb198...`）并推送至 Private GitHub 仓库 `wangyam1/LAVE2027`。**
+- **设置与效率**：`eval140` 覆盖 **140 题 / 140 个独立视频**（7 类严格每类 20 题，与 `pilot14` 零重叠），采用官方多步 VideoSeek 协议（`overview / skim / focus / answer`，`max_steps = 6`）、100% Training-Free 冻结 `Qwen3.5-9B` + 原生免魔改 vLLM 0.19.0、**纯单视频三项自检（零跨视频 foil，通过率 `385/385 = 100%`）**，Receiver 与 Top-8 零像素隐状态核验均严格断言 `visual_forwards == 0`。均题步数/视觉调用/帧数：`Vanilla 4.66 步 / 3.86 次 / 77.71 帧` → **`LAVE 4.64 步 / 3.75 次 / 76.00 帧`**（Receiver 均耗时 `10.26s`）；`pilot14`（14 题）上 `lave_route_text` 在持平准确率 `8/14 (57.1%)` 下减少 **`−22.6%` 视觉调用、`−17.5%` 帧数**（`72.0 → 59.4` 帧）。
+- **全量 140 题准确率（`max_steps = 6`）**：
+  - **`lave_route_text`（机制 A：LAVE 视觉状态路由）**：**`50 / 140`（`35.71%`）** vs `vanilla_text` `40 / 140`（`28.57%`）——**`+18 赢 / −8 输`（净 `+10`, `+7.14 pp`，双侧精确 McNemar `p = 0.0755` / 单侧 `p = 0.0378`；115 题改道子集 `40.0% vs 31.3%`, `+8.70 pp`）**，**7 大推理题型中 6 类严格胜出**（`MHR` 11 vs 8、`IMC` 9 vs 7、`PAR` 8 vs 6、`TCI` 6 vs 4、`CTI` 5 vs 4、`TA` 5 vs 4，仅 `SR` 6 vs 7）；
+  - **`lave_full`（机制 A + Top-8 零像素核验）**：**`48 / 140`（`34.29%`）**（vs `vanilla_text` `+21/−13`, `+5.71 pp`；vs `vanilla_latent_qa` `+14/−10`, `+2.86 pp`；`SR` 上冲至 `9/20 = 45.0%`）；
+  - **`vanilla_latent_qa`（仅机制 B，0 额外视觉前向）**：**`44 / 140`（`31.43%`）**（vs `vanilla_text` `+12/−8`, `+2.86 pp`）；
+  - **多步漂移诊断（Step-4 断点诚实记录）**：`vanilla_step4 = 52/140 (37.14%)` 在后两步盲找干扰下掉点 **`−8.57 pp`** 至 `28.57%`，而 `lave_step4 = 49/140 (35.00%)` 稳步升至 `35.71%`（`+0.71 pp`），印证视觉状态路由显著抑制多步长链漂移。 [eval140 评分](videoseek_lave_20261126/score_eval140.json) · [GitHub 仓库](https://github.com/wangyam1/LAVE2027)
+
 **LongVideoBench 150 类别均衡全量验证（`lvb_vllm_20261126`）已在双卡 A40（GPU 0 + GPU 1）上全量跑完并双卡归零释放（`0 MiB`, `gpu_released: true`），完成 CPU 单次解封评分（`score.json`: `e5c5cfe1...`）。**
 - **设置与效率**：150 题覆盖 146 个独立长视频（`duration >= 180s`：`duration_group=3600` 101 题、`600` 49 题）、均匀覆盖全部 17 个 LVB 题型（每类 8–9 题）；运行在隔离环境 `/data1/llj/lljmas/envs/lave_vllm_20261126` 的原生免魔改 **vLLM 0.19.0** 引擎（冻结 `Qwen3.5-9B`，100% Training-Free，`mm_processor_cache_gb=0` 修复默认 4 GiB 缓存驱逐不同步）。控制通过率 **`108 / 130`（`83.1%`）**（与 CG-Bench 96 盲确认的 `69/83 = 83.1%` 精准一致；`K=4`: 101, `K=2`: 5, `K=1`: 2）；均题三臂总耗时 **`70.28 s`**（LAVE Receiver 仅 **`5.07 s`**），Focus-1 均 **`1.91` 轮 / `60.71` 帧**，Focus-1+2 等预算均 **`2.37` 轮 / `67.96` 帧**。
 - **全量 150 题准确率**：

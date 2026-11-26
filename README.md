@@ -33,7 +33,7 @@ All evaluations use frozen **`Qwen3.5-9B`** (`temperature=0.0`, `thinking=False`
 | **LongVideoBench-150** *(All 17 Cats)* | **150 (146 vids)** | Qwen3.5-9B (**vLLM 0.19.0**) | **Direct Visual QA (Focus-1+2)** | 83/150 (`55.3%`) | 85/150 (`56.7%`) | **87/150 (`58.0%`)** | **+5 / −1** (**`+2.67 pp`**, `p = 0.219`; **0/17 category regressions**) | [score.json](results/longvideobench_150/score.json) |
 | **LongVideoBench-150** *(Routed Subset)* | 108 routed | Qwen3.5-9B (**vLLM 0.19.0**) | Direct Visual QA (Focus-1+2) | 67/108 (`62.0%`) | 69/108 (`63.9%`) | **71/108 (`65.7%`)** | **+5 / −1** (**`+3.70 pp`**; vs pure-text `text` `53.3%` → **`+4.67 pp` total**) | [notes.md](results/longvideobench_150/notes.md) |
 | **Video-Holmes Pilot** *(Multi-Step VideoSeek+LAVE)* | 14 (14 vids, 7×2) | Qwen3.5-9B (**vLLM 0.19.0**) | Multi-Step (`max_steps=6`) Acc / Frames / Calls | `8/14 (57.1%)` (`72.0f`, `3.50` calls, `4.36` st) | — | **`8/14 (57.1%)`** (**`59.4f` −17.5%**, **`2.71` calls −22.6%**, `3.71` st) | Same accuracy (`+0/−0`) with **12.6 fewer frames** & **−22.6% visual calls** (`24/24` controls) | [score_pilot14.json](results/video_holmes/score_pilot14.json) |
-| **Video-Holmes Eval** *(Multi-Step VideoSeek+LAVE)* | **140 (140 vids, 7×20)** | Qwen3.5-9B (**vLLM 0.19.0**) | 6-Arm Multi-Step (`step4` + `step6` + `top-8 latent verify`) | *Running on A40 GPU 1* | — | *In progress* | *Disjoint from pilot14; single-video self-controls + 0-pixel latent verify* | [results/video_holmes/](results/video_holmes/) |
+| **Video-Holmes Eval** *(Multi-Step VideoSeek+LAVE)* | **140 (140 vids, 7×20)** | Qwen3.5-9B (**vLLM 0.19.0**) | **Multi-Step (`max_steps=6`) Overall / Rerouted** | `40/140 (28.6%)` / `36/115 (31.3%)` (`77.7f`, `3.86` calls) | — | **`50/140 (35.7%)`** / **`46/115 (40.0%)`** (**`76.0f`**, **`3.75` calls**) | **+18 / −8** (**`+7.14 pp`**, 2-sided `p = 0.0755`, 1-sided `p = 0.0378`; **6/7 categories win!**) | [score_eval140.json](results/video_holmes/score_eval140.json) |
 
 ---
 
@@ -91,7 +91,31 @@ Frozen blind manifest (`150` questions across `146` unique long videos `>= 180s`
 
 ---
 
-### 5. Native vLLM 0.19.0 Parity & Speedup Benchmark (`results/vllm_parity/bench_vllm_b33.json`)
+### 5. Video-Holmes 140-Video Multi-Step VideoSeek + LAVE Evaluation (`results/video_holmes/`)
+
+Frozen blind cohort (`140` questions across `140` unique videos, balanced `20` per each of all 7 categories, strictly disjoint from `pilot14`, single A40 GPU 1, released to `0 MiB`, pure single-video self-controls with zero cross-video foil, `385/385` controls passed, `0` vision calls in Receiver & Latent QA).
+
+| Arm (`N = 140`, `max_steps = 6`) | Overall Acc | Rerouted (`N = 115`) | Paired vs `vanilla_text` | Avg Steps / Visual Calls / Frames |
+| :--- | :---: | :---: | :---: | :---: |
+| `vanilla_text` (Official VideoSeek) | `40 / 140` (`28.57%`) | `36 / 115` (`31.30%`) | — | `4.66` / `3.86` / `77.71` |
+| `vanilla_latent_qa` (+ Mech B: Top-8 0-pixel verify) | `44 / 140` (`31.43%`) | `40 / 115` (`34.78%`) | `+12 / −8` (`+2.86 pp`, `p = 0.503`) | `77.71` *(0 extra vision calls)* |
+| `lave_full` (+ Mech A Route + Mech B Verify) | `48 / 140` (`34.29%`) | `44 / 115` (`38.26%`) | `+21 / −13` (`+5.71 pp`, `p = 0.229`; vs `v_lat` `+14/−10`) | **`4.64` / `3.75` / `76.00`** |
+| **`lave_route_text` (+ Mech A: LAVE Routing)** | **`50 / 140` (`35.71%`)** | **`46 / 115` (`40.00%`)** | **`+18 / −8` (`+7.14 pp`, 2-sided `p = 0.0755`, 1-sided `p = 0.0378`)** | **`4.64` / `3.75` / `76.00`** |
+
+**Per-Category Breakdown (`n = 20` each)**:
+
+| Arm | CTI | IMC | MHR | PAR | SR | TA | TCI | **Total (140)** |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| `vanilla_text` | 4 | 7 | 8 | 6 | 7 | 4 | 4 | `40 (28.6%)` |
+| `vanilla_latent_qa` | 5 | 8 | 8 | 6 | 5 | **6** | **6** | `44 (31.4%)` |
+| **`lave_route_text`** | **5** | **9** | **11** | **8** | 6 | 5 | **6** | **`50 (35.7%)`** |
+| `lave_full` | **5** | 8 | **11** | 5 | **9** | 5 | 5 | `48 (34.3%)` |
+
+*(Anytime Step-4 checkpoint: `vanilla_step4 = 52/140 (37.1%)` degrades `−8.57 pp` to `28.6%` by Step 6 under late-step blind-search drift, whereas `lave_step4 = 49/140 (35.0%)` improves `+0.71 pp` to `35.7%` by Step 6. See [results/video_holmes/notes.md](results/video_holmes/notes.md).)*
+
+---
+
+### 6. Native vLLM 0.19.0 Parity & Speedup Benchmark (`results/vllm_parity/bench_vllm_b33.json`)
 
 4-case A40 benchmark (`case_16 / 06 / 20 / 38`, frozen `Qwen3.5-9B`, zero vLLM source patches, `forbid_vision_hook` enforcing `0` vision calls in Receiver):
 
