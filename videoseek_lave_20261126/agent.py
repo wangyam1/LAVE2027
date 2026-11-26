@@ -88,9 +88,57 @@ def uniform_timestamps(start_s, end_s, num_frames, duration):
     return [round(float(x), 2) for x in np.linspace(s, e, int(num_frames))]
 
 
+def strip_think_tags(text):
+    """Strip <think>...</think> reasoning blocks emitted by Thinking models cleanly."""
+    s = (text or "").strip()
+    if "</think>" in s:
+        after = s.rsplit("</think>", 1)[1].strip()
+        if after:
+            return after
+        # If nothing after </think>, return content inside <think> stripped of tags
+        return re.sub(r"</?think>", "", s).strip()
+    if "<think>" in s:
+        return re.sub(r"</?think>", "", s).strip()
+    return s
+
+
+def choose_geometric_clock_peak(duration, planner_start, planner_end, visited_windows=()):
+    """Deterministic equal-budget geometric peak: midpoint of the largest unvisited temporal gap outside planner window."""
+    dur = max(2.0, float(duration))
+    intervals = [(max(0.0, float(planner_start)), min(dur, float(planner_end)))]
+    for lo, hi in visited_windows:
+        intervals.append((max(0.0, float(lo)), min(dur, float(hi))))
+    intervals.sort()
+    merged = []
+    for lo, hi in intervals:
+        if not merged or lo > merged[-1][1]:
+            merged.append([lo, hi])
+        else:
+            merged[-1][1] = max(merged[-1][1], hi)
+
+    gaps = []
+    cur = 0.0
+    for lo, hi in merged:
+        if lo > cur + 1.0:
+            gaps.append((lo - cur, 0.5 * (cur + lo)))
+        cur = max(cur, hi)
+    if dur > cur + 1.0:
+        gaps.append((dur - cur, 0.5 * (cur + dur)))
+
+    if gaps:
+        gaps.sort(key=lambda x: x[0], reverse=True)
+        return [round(float(gaps[0][1]), 2)]
+    # Fallback: opposite side of video outside planner window
+    mid_p = 0.5 * (float(planner_start) + float(planner_end))
+    cand = 0.25 * dur if mid_p >= 0.5 * dur else 0.75 * dur
+    if float(planner_start) <= cand <= float(planner_end):
+        return []
+    return [round(float(cand), 2)]
+
+
 def parse_tool_call(raw_text, valid_tools=("overview", "skim", "focus", "answer")):
     """Parse Qwen3.5 <tool_call> XML or JSON tool call deterministically."""
-    text = (raw_text or "").strip()
+    text = strip_think_tags(raw_text)
     # Pattern 1: Qwen3.5 XML format <tool_call><function=name><parameter=k>v</parameter>...</function></tool_call>
     m_fn = re.search(r"<function\s*=\s*([a-zA-Z0-9_]+)\s*>([\s\S]*?)</function>", text)
     if m_fn:
@@ -160,7 +208,7 @@ def parse_tool_call(raw_text, valid_tools=("overview", "skim", "focus", "answer"
 
 def extract_choice_letter(text, valid_letters):
     """Extract a single valid uppercase multiple-choice letter from model output."""
-    s = (text or "").strip()
+    s = strip_think_tags(text)
     valid_set = set(valid_letters)
     if len(s) == 1 and s.upper() in valid_set:
         return s.upper()
@@ -316,6 +364,8 @@ class AgentConfig:
     skim_max_tokens: int = 640
     focus_max_tokens: int = 512
     thought_max_tokens: int = 384
+    thinking_max_tokens: int = 1024
+    enable_thinking: bool = False
     parser_max_tokens: int = 160
     answer_max_tokens: int = 32
 
@@ -688,8 +738,12 @@ class VideoSeekLaveRunner:
                     ),
                 }
             )
-            thought_out = self.engine.generate_text(messages, max_tokens=self.cfg.thought_max_tokens)
-            thought = thought_out["text"].strip() or "Need more visual evidence."
+            t_max = self.cfg.thinking_max_tokens if self.cfg.enable_thinking else self.cfg.thought_max_tokens
+            if self.cfg.enable_thinking:
+                thought_out = self.engine.generate_text(messages, max_tokens=t_max, enable_thinking=True)
+            else:
+                thought_out = self.engine.generate_text(messages, max_tokens=t_max)
+            thought = strip_think_tags(thought_out["text"]) or "Need more visual evidence."
             messages.append({"role": "assistant", "content": thought})
 
             # Action parser (official VideoSeek 2-stage thought -> tool_call)

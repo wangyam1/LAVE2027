@@ -8,13 +8,16 @@ import unittest
 import torch
 
 from videoseek_lave_20261126.agent import (
+    choose_geometric_clock_peak,
     extract_choice_letter,
     normalized_positive_entropy,
     parse_tool_call,
     plan_split_budget_timestamps,
     select_latent_peaks,
     select_top_bank_entries,
+    strip_think_tags,
 )
+from videoseek_lave_20261126.baselines_holmes import _thin_image_history
 from videoseek_lave_20261126.engine_ext import concat_multi_image_embeds
 from videoseek_lave_20261126.holmes_inputs import HOLMES_CATEGORIES, build_balanced_holmes_manifests
 from videoseek_lave_20261126.mme_inputs import parse_mme_options
@@ -130,6 +133,34 @@ class TestVideoSeekLaveCPU(unittest.TestCase):
     def test_parse_mme_options(self):
         opts = parse_mme_options(["A. Apples.", "B. Candles.", "C. Berries.", "D. All same."])
         self.assertEqual(opts, {"A": "Apples.", "B": "Candles.", "C": "Berries.", "D": "All same."})
+
+    def test_strip_think_tags(self):
+        raw = "<think>Let me analyze step by step...</think>\nFinal answer: (D)"
+        self.assertEqual(strip_think_tags(raw), "Final answer: (D)")
+        self.assertEqual(extract_choice_letter(raw, ("A", "B", "C", "D")), "D")
+        self.assertEqual(strip_think_tags("<think>unclosed reasoning only"), "unclosed reasoning only")
+
+    def test_choose_geometric_clock_peak(self):
+        # Video 0..200s, planner inspects 10..30s -> largest unvisited gap is 30..200s -> midpoint 115.0s
+        peaks = choose_geometric_clock_peak(200.0, 10.0, 30.0, visited_windows=[])
+        self.assertEqual(peaks, [115.0])
+        # With 90..180s also visited -> largest remaining gap is 30..90s (60s) -> midpoint 60.0s
+        peaks2 = choose_geometric_clock_peak(200.0, 10.0, 30.0, visited_windows=[(90.0, 180.0)])
+        self.assertEqual(peaks2, [60.0])
+
+    def test_thin_image_history_respects_budget(self):
+        entries = [
+            dict(tool="overview", note="0-100", images=list(range(32)), timestamps=list(range(32))),
+            dict(tool="skim", note="10-50", images=list(range(16)), timestamps=list(range(16))),
+            dict(tool="focus", note="20-35", images=list(range(16)), timestamps=list(range(16))),
+            dict(tool="focus", note="60-75", images=list(range(16)), timestamps=list(range(16))),
+        ]
+        kept, pruned = _thin_image_history(entries, max_images=64)
+        total_kept = sum(len(e["images"]) for e in kept)
+        self.assertLessEqual(total_kept, 64)
+        self.assertGreater(pruned, 0)
+        # Most recent focus entry stays completely intact
+        self.assertEqual(len(kept[-1]["images"]), 16)
 
 
 if __name__ == "__main__":

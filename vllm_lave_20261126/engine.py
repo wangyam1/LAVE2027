@@ -195,6 +195,7 @@ class VLLMLaveEngine:
         mamba_cache_mode="align",
         enforce_eager=False,
         mm_processor_kwargs=None,
+        limit_mm_per_prompt=None,
         llm=None,
         tokenizer=None,
     ):
@@ -215,15 +216,16 @@ class VLLMLaveEngine:
             max_num_batched_tokens=max_num_batched_tokens,
             gpu_memory_utilization=gpu_memory_utilization,
             max_num_seqs=max_num_seqs,
-            limit_mm_per_prompt={"image": 32},
+            limit_mm_per_prompt=limit_mm_per_prompt or {"image": 32},
             enable_mm_embeds=True,
             mm_processor_cache_gb=0,
             enable_prefix_caching=enable_prefix_caching,
-            mamba_cache_mode=mamba_cache_mode,
             logprobs_mode="processed_logits",
             enforce_eager=enforce_eager,
             trust_remote_code=False,
         )
+        if mamba_cache_mode is not None:
+            kwargs["mamba_cache_mode"] = mamba_cache_mode
         if mm_processor_kwargs is not None:
             kwargs["mm_processor_kwargs"] = mm_processor_kwargs
         self.llm = LLM(**kwargs)
@@ -240,8 +242,8 @@ class VLLMLaveEngine:
         out = self._image_processor(images=list(pil_images), return_tensors="pt")
         return tuple(tuple(int(v) for v in row) for row in out["image_grid_thw"].tolist())
 
-    def _render_chat(self, messages, *, tools=None):
-        template = dict(tokenize=False, add_generation_prompt=True, enable_thinking=False)
+    def _render_chat(self, messages, *, tools=None, enable_thinking=False):
+        template = dict(tokenize=False, add_generation_prompt=True, enable_thinking=bool(enable_thinking))
         if tools is not None:
             template["tools"] = tools
         return self.tokenizer.apply_chat_template(messages, **template)
@@ -311,16 +313,21 @@ class VLLMLaveEngine:
             seconds=round(elapsed, 3),
         )
 
-    def generate_vlm(self, messages, pil_images, *, max_tokens=2048):
-        """Run standard multimodal generation (source_query, Focus-1, Focus-2)."""
-        return self.generate_vlm_batch([(messages, pil_images)], max_tokens=max_tokens)[0]
+    def generate_vlm(self, messages, pil_images, *, max_tokens=2048, enable_thinking=False):
+        """Run standard multimodal generation (source_query, Focus-1, Focus-2, VideoSeek-Image)."""
+        return self.generate_vlm_batch(
+            [(messages, pil_images)], max_tokens=max_tokens, enable_thinking=enable_thinking
+        )[0]
 
-    def generate_vlm_batch(self, items, *, max_tokens=2048):
+    def generate_vlm_batch(self, items, *, max_tokens=2048, enable_thinking=False):
         """Batch multiple multimodal requests (messages, pil_images) into one vLLM generate call."""
         if not items:
             return []
         reqs = [
-            {"prompt": self._render_chat(msgs), "multi_modal_data": {"image": list(imgs)}}
+            {
+                "prompt": self._render_chat(msgs, enable_thinking=enable_thinking),
+                "multi_modal_data": {"image": list(imgs)},
+            }
             for msgs, imgs in items
         ]
         params = self._make_sampling_params(temperature=0.0, max_tokens=max_tokens)
@@ -331,23 +338,27 @@ class VLLMLaveEngine:
         res = []
         for req_out in outputs:
             out = req_out.outputs[0]
+            prompt_toks = len(getattr(req_out, "prompt_token_ids", None) or ())
             res.append(dict(
                 text=out.text,
+                prompt_tokens=prompt_toks,
                 output_tokens=len(out.token_ids),
                 capped=out.finish_reason == "length",
                 seconds=per_item,
             ))
         return res
 
-    def generate_text(self, messages, *, max_tokens=512, tools=None):
+    def generate_text(self, messages, *, max_tokens=512, tools=None, enable_thinking=False):
         """Run pure-text generation (Planner, QA-1, QA-2); preserve <tool_call> tags when tools are supplied."""
-        return self.generate_text_batch([messages], max_tokens=max_tokens, tools=tools)[0]
+        return self.generate_text_batch(
+            [messages], max_tokens=max_tokens, tools=tools, enable_thinking=enable_thinking
+        )[0]
 
-    def generate_text_batch(self, messages_list, *, max_tokens=512, tools=None):
+    def generate_text_batch(self, messages_list, *, max_tokens=512, tools=None, enable_thinking=False):
         """Batch multiple pure-text requests into one vLLM generate call."""
         if not messages_list:
             return []
-        reqs = [{"prompt": self._render_chat(m, tools=tools)} for m in messages_list]
+        reqs = [{"prompt": self._render_chat(m, tools=tools, enable_thinking=enable_thinking)} for m in messages_list]
         skip_special = tools is None
         params = self._make_sampling_params(
             temperature=0.0, max_tokens=max_tokens, skip_special_tokens=skip_special,
@@ -364,8 +375,10 @@ class VLLMLaveEngine:
                 for eos_tok in ("<|im_end|>", "<|endoftext|>"):
                     if text.endswith(eos_tok):
                         text = text[:-len(eos_tok)]
+            prompt_toks = len(getattr(req_out, "prompt_token_ids", None) or ())
             res.append(dict(
                 text=text,
+                prompt_tokens=prompt_toks,
                 output_tokens=len(out.token_ids),
                 capped=out.finish_reason == "length",
                 seconds=per_item,
