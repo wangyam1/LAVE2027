@@ -112,6 +112,8 @@ def _install_source_capture(model):
     model._lave_vision_calls = 0
 
     def _on_visual(_module, args, kwargs, output):
+        import torch
+
         model._lave_vision_calls += 1
         grid = kwargs.get("grid_thw")
         if grid is None and len(args) >= 2:
@@ -119,7 +121,14 @@ def _install_source_capture(model):
         if grid is None:
             raise ValueError("Could not locate grid_thw in model.visual call")
         tensor = output[0] if isinstance(output, tuple) else output
-        model._lave_captured.append((tensor.detach().cpu(), grid.detach().cpu()))
+        grid_t = (
+            grid.detach().cpu()
+            if isinstance(grid, torch.Tensor)
+            else torch.as_tensor(grid, dtype=torch.long).cpu()
+        )
+        if grid_t.ndim == 1:
+            grid_t = grid_t.reshape(-1, 3)
+        model._lave_captured.append((tensor.detach().cpu(), grid_t))
 
     model._lave_hook = model.visual.register_forward_hook(_on_visual, with_kwargs=True)
 
