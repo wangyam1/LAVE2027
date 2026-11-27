@@ -1,6 +1,6 @@
 # LAVE2027: Training-Free Visual-State Communication for Active Evidence Acquisition in Long Videos
 
-**LAVE** (*Latent Visual Evidence-Enhanced Planning*, arXiv:2608.07585) is a **100% training-free** visual-state communication framework for long-video tool-use agents on frozen multimodal backbones (`Qwen3.5-9B`).
+**LAVE** (*Latent Visual Evidence-Enhanced Planning*, arXiv:2608.07585) is a **100% training-free** visual-state communication framework for long-video tool-use agents on frozen multimodal backbones (`Qwen2.5-VL-7B-Instruct`, `Qwen3.5-9B`, `Qwen3.5-4B`).
 
 Instead of discarding precomputed visual representations after a coarse tool call compresses frames into text, LAVE caches post-merger visual states with **zero vision-encoder replay**, scores candidate slots via a **zero-pixel Calibrated-Lift Receiver** under strict content controls, and routes subsequent fine-grained `Focus` / `Skim` calls—and direct zero-pixel latent visual answering—natively inside **vLLM 0.19.0** (`enable_mm_embeds=True`, M-RoPE, zero vLLM source modifications).
 
@@ -37,7 +37,8 @@ All evaluations use frozen **`Qwen3.5-9B`** (`temperature=0.0`, `thinking=False`
 | **Video-MME 216** *(72S / 72M / 72L, 12 tasks)* | **216 unique vids** | Qwen3.5-9B (**vLLM 0.19.0**) | **Multi-Step (`max_steps=6`) Overall (S / M / L)** | `125/216 (57.9%)` (`77.8 / 55.6 / 40.3`) | — | **`lave_full 138 (63.9%)`** / **`v_lat 141 (65.3%)`** / `l_rt 131 (60.6%)` (**`64.7f`**, **`3.04` calls −8.7%**) | `lave_full` **+26/−13 (`+6.02 pp`, `p = 0.053`)**; `v_lat` **+23/−7 (`+7.41 pp`, `p = 0.0052`)**; **0/3 duration regressions** | [score_mme.json](results/videomme_216/score_mme.json) |
 | **LongVideoBench-150** *(Multi-Step, 17 cats)* | **150 (146 vids)** | Qwen3.5-9B (**vLLM 0.19.0**) | **Multi-Step (`max_steps=6`) Overall / 1h (`dg=3600`, `n=101`)** | `85/150 (56.7%)` / `53.5%` (`96.4f`, `5.03` calls) | — | **`l_rt 87/150 (58.0%)`** / **`59.4% (+5.94 pp)`** (**`91.6f`**, **`4.73` calls −6.0%**) | **`+5.94 pp`** on ultra-long 1-hour videos with **−6.0% visual calls** & **−4.8 frames** | [score_lvb150_multistep.json](results/lvb150_multistep/score_lvb150_multistep.json) |
 | **Video-Holmes Cross-Scale** | **140 unique vids** | **`Qwen3.5-4B`** (**vLLM 0.19.0**) | Multi-Step (`max_steps=6`) Acc | `35/140 (25.0%)` (`72.2f`, `3.51` calls) | — | `l_full 39 (27.9%)` / **`v_lat 52/140 (37.1%)`** (**`69.5f`**, **`3.34` calls**) | `v_lat` **+22 / −5 (`+12.14 pp`, `p = 0.00151`)** — beats frozen 9B text VideoSeek (`28.6%`) by **`+8.57 pp`**! | [score_qwen35_4b.json](results/video_holmes/score_qwen35_4b.json) |
-| **Video-Holmes Cross-Architecture** | **140 unique vids** | **`Qwen2.5-VL-7B-Instruct`** *(Pure Transformer)* | Multi-Step (`max_steps=6`) Acc | `22/140 (15.7%)` (`48.8f`, `2.05` calls) | — | `l_rt 24 (17.1%)` / **`l_full 40/140 (28.6%)`** (**`46.3f`**, **`1.89` calls −7.8%**, `rx=1.29s`) | **`lave_full` +24 / −6 (`+12.86 pp`, `p = 0.00143`)** with **−7.8% visual calls** & 0 vision replay | [score_qwen25vl_7b.json](results/video_holmes/score_qwen25vl_7b.json) |
+| **Video-Holmes-315 Main** *(Multi-Step `s=8`, Option B)* | **315 (270/270 vids, 7×45)** | **`Qwen2.5-VL-7B-Instruct`** *(vLLM 0.19.0)* | **Multi-Step (`max_steps=8`) Overall / Rerouted (`n=246`)** | `81/315 (25.71%)` (`76.7f`, `3.79` calls, `0` inv) | — | **`lave_full_visonly 120/315 (38.10%)`** / `v_lat_vis 114 (36.19%)` / `l_full 104 (33.02%)` / `l_rt 86 (27.30%)` (**`70.8f`**, **`3.42` calls −9.8%**) | **`+68 / −29` (`+12.38 pp`, exact `p = 0.000093`)**; **7/7 categories win**; beats RL-trained `Video-R1-7B` (`36.5%`) training-free! | [score_qwen25vl_holmes315_s8.json](results/qwen25vl_s8/score_qwen25vl_holmes315_s8.json) |
+| **Video-Holmes Cross-Architecture** *(Earlier 6-step)* | **140 unique vids** | **`Qwen2.5-VL-7B-Instruct`** *(Pure Transformer)* | Multi-Step (`max_steps=6`) Acc | `22/140 (15.7%)` (`48.8f`, `2.05` calls) | — | `l_rt 24 (17.1%)` / **`l_full 40/140 (28.6%)`** (**`46.3f`**, **`1.89` calls −7.8%**, `rx=1.29s`) | **`lave_full` +24 / −6 (`+12.86 pp`, `p = 0.00143`)** with **−7.8% visual calls** & 0 vision replay | [score_qwen25vl_7b.json](results/video_holmes/score_qwen25vl_7b.json) |
 | **Video-Holmes Thinking Mode** | 46 balanced prefix | **`Qwen3.5-9B-Thinking`** (`enable_thinking=True`) | Multi-Step (`max_steps=6`) Acc | `11/46 (23.9%)` (`95.0f`, `4.93` calls) | — | `l_rt 14 (30.4%)` / **`l_full 15/46 (32.6%)`** (**`89.0f`**, **`4.57` calls −7.3%**) | Strict monotonic ladder: `23.9% → 26.1% → 30.4% → 32.6%` (**`+8.70 pp`**, `l_full vs v_lat +3/−0`) | [score_qwen35_9b_thinking.json](results/video_holmes/score_qwen35_9b_thinking.json) |
 
 ---
@@ -145,7 +146,33 @@ Frozen blind cohort (`140` questions across `140` unique videos, balanced `20` p
 
 ---
 
-### 7. Native vLLM 0.19.0 Parity & Speedup Benchmark (`results/vllm_parity/bench_vllm_b33.json`)
+### 7. Qwen2.5-VL-7B-Instruct Main Benchmark: Video-Holmes-315 (`max_steps = 8`, Option B)
+
+Frozen append-only blind manifest (`preflight_holmes315.json`, PIN `cc7b42b1...`, **`N = 315`**, `45 × 7` balanced categories covering **all `270/270` unique Video-Holmes videos**, prefix `[0..139]` exact `eval140`), single A40 GPU 0, `max_steps = 8`, zero refusal (`invalid_answers = {}`), `0` Vanilla invalid tool calls, `visual_forwards == 0` enforced in Receiver & Mech B. Receipt: [score_qwen25vl_holmes315_s8.json](results/qwen25vl_s8/score_qwen25vl_holmes315_s8.json) (`SHA 34499116...`).
+
+| Arm (`N = 315`, `Qwen2.5-VL-7B-Instruct`, `max_steps = 8`) | Overall Acc | Rerouted (`n = 246`) | Paired vs `vanilla_text` (`p`) | Efficiency (Steps / VCalls / Frames) |
+| :--- | :---: | :---: | :---: | :---: |
+| `vanilla_text` (8-step Caption VideoSeek) | `81 / 315` (`25.71%`) | `67 / 246` (`27.24%`) | baseline | `4.71` / `3.79` / `76.70` (`0` inv) |
+| `lave_route_text` (+ Mech A: Visual-State Routing) | `86 / 315` (`27.30%`) | `69 / 246` (`28.05%`) | `+20 / −15` (`+1.59 pp`, `p = 0.500`) | **`4.39` / `3.42` (`−9.8%`) / `70.76` (`−5.9f`)**, `rx = 3.81 s` |
+| `lave_full` (+ Mech A + Mech B clean-obs) | `104 / 315` (`33.02%`) | `82 / 246` (`33.33%`) | `+50 / −27` (**`+7.30 pp`, `p = 0.0117 *`**) | **`3.42` vcalls (`−9.8%`)**, `0` extra vision calls |
+| `vanilla_latent_qa` (+ Mech B clean-obs on Vanilla bank) | `107 / 315` (`33.97%`) | `86 / 246` (`34.96%`) | `+55 / −29` (**`+8.25 pp`, `p = 0.0060 ** `**) | `3.79` vcalls, `0` extra vision calls |
+| `vanilla_latent_visonly` (+ Mech B pure visual-state) | `114 / 315` (`36.19%`) | `92 / 246` (`37.40%`) | `+62 / −29` (**`+10.48 pp`, `p = 0.000705 *** `**) | `3.79` vcalls, `0` extra vision calls |
+| **`lave_full_visonly` (+ Mech A Route + Mech B Pure Visual-State)** | **`120 / 315` (`38.10%`)** | **`97 / 246` (`39.43%`)** | **`+68 / −29` (`+12.38 pp`, `p = 0.000093`)** *(vs `v_lat_vis` `+22/−16`, `+1.90 pp`)* | **`4.39` / `3.42` (`−9.8%`) / `70.76`**, `739/763` (`96.85%`) controls |
+
+**Per-Category Breakdown (`n = 45` each — 7/7 Categories Beat `vanilla_text`)**:
+
+| Arm | CTI | IMC | MHR | PAR | SR | TA | TCI | **Total (315)** |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| `vanilla_text` | 14 (`31.1%`) | 16 (`35.6%`) | 7 (`15.6%`) | 13 (`28.9%`) | 9 (`20.0%`) | 11 (`24.4%`) | 11 (`24.4%`) | `81 (25.71%)` |
+| `lave_route_text` | 16 (`35.6%`) | 16 (`35.6%`) | 6 (`13.3%`) | 12 (`26.7%`) | 11 (`24.4%`) | **13 (`28.9%`)** | 12 (`26.7%`) | `86 (27.30%)` |
+| `vanilla_latent_visonly` | 13 (`28.9%`) | **19 (`42.2%`)** | 17 (`37.8%`) | **15 (`33.3%`)** | **21 (`46.7%`)** | 11 (`24.4%`) | **18 (`40.0%`)** | `114 (36.19%)` |
+| **`lave_full_visonly`** | **17 (`37.8%`)** | **19 (`42.2%`)** | **19 (`42.2%`)** | 14 (`31.1%`) | **21 (`46.7%`)** | 12 (`26.7%`) | **18 (`40.0%`)** | **`120 (38.10%)`** |
+
+*(Horizon scaling: Vanilla `25.40% (S4) → 25.71% (S6) → 25.71% (S8)` vs LAVE `26.67% (S4) → 26.35% (S6) → 27.30% (S8)`. On the same `Qwen2.5-VL-7B` backbone, 100% training-free `lave_full_visonly (38.10%)` surpasses published single-turn `Qwen2.5-VL-7B` (`34.7%`), RL-trained `VideoChat-R1-7B` (`33.0%`), `SEED-Bench-R1-7B` (`33.5%`), and `Video-R1-7B` (`36.5%`); see [docs/EXPERIMENT_PLAN.md](docs/EXPERIMENT_PLAN.md).)*
+
+---
+
+### 8. Native vLLM 0.19.0 Parity & Speedup Benchmark (`results/vllm_parity/bench_vllm_b33.json`)
 
 4-case A40 benchmark (`case_16 / 06 / 20 / 38`, frozen `Qwen3.5-9B`, zero vLLM source patches, `forbid_vision_hook` enforcing `0` vision calls in Receiver):
 
@@ -174,8 +201,11 @@ LAVE2027/
 │   ├── cgbench_confirm96/           # Confirm-96 sealed protocol, release.json, score.json, notes
 │   ├── vllm_parity/                 # vLLM 0.19.0 parity & 3.35x speedup benchmark receipt
 │   ├── longvideobench_150/          # LVB-150 frozen preflight, shard terminals, score.json, notes
-│   └── video_holmes/                # Video-Holmes multi-step VideoSeek+LAVE receipts
+│   ├── video_holmes/                # Video-Holmes multi-step VideoSeek+LAVE receipts
+│   ├── manifests_n300/              # Append-only N>=300 blind manifests (holmes315, mme306, lvb306)
+│   └── qwen25vl_s8/                 # Qwen2.5-VL-7B-Instruct max_steps=8 Option B sealed scores
 └── docs/
+    ├── EXPERIMENT_PLAN.md           # Closed-loop N>=300 experiment & external-baseline plan
     └── RESEARCH_MEMORY.md           # Full chronological research & audit trail
 ```
 

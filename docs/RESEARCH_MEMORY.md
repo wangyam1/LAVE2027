@@ -6,6 +6,16 @@
 
 ## 当前交接
 
+**2026-11-27 16:31 CST｜`Qwen2.5-VL-7B-Instruct` 单卡（仅 GPU 0）`Video-Holmes-315`（`N = 315`, `max_steps = 8`, Option B 纯视觉状态读出 `visonly`）全量关账并完成 CPU 单次解封评分（`score_qwen25vl_holmes315_s8.json`: `34499116...`），同步推进 `Video-MME-306`（GPU 1/2 全程 `0 MiB`）！**
+- **里程碑主结果（`N = 315`, 7 类 × 45 题, 覆盖 Video-Holmes 全部 `270/270` 独立视频, `invalid_answers = {}` 零拒答, `vanilla_invalid_tool_steps = 0`, Receiver & Mech B 严格断言 `visual_forwards == 0`）**：
+  - `vanilla_text`（8-step Caption VideoSeek）：`81 / 315 (25.71%)`（`4.71` 步 / `3.79` 次视觉调用 / `76.70` 帧）；
+  - `lave_route_text`（+Mech A 视觉状态路由）：`86 / 315 (27.30%)`（`+20/−15`, `+1.59 pp`），**同步省步数与视觉调用（`4.39` 步 / `3.42` 次 `−9.8%` / `70.76` 帧 `−5.9f`，Receiver 仅 `3.81 s/case`，控制通过率 `739/763 = 96.85%`）**；
+  - `lave_full`（+Mech A + Mech B 过滤空拒答 `clean_obs`）：`104 / 315 (33.02%)`（`+50/−27`, **`+7.30 pp`, `p = 0.01167 *`**）；
+  - `vanilla_latent_qa`（+Mech B `clean_obs`）：`107 / 315 (33.97%)`（`+55/−29`, **`+8.25 pp`, `p = 0.00604 ** `**）；
+  - `vanilla_latent_visonly`（+Mech B 纯视觉状态）：`114 / 315 (36.19%)`（`+62/−29`, **`+10.48 pp`, `p = 0.000705 *** `**）；
+  - **`lave_full_visonly`（+Mech A 路由 + Mech B 纯视觉状态 Top-8 读出）**：**`120 / 315 (38.10%)`** —— 对 `vanilla_text` **`+68 赢 / −29 输`（`+12.38 pp`, 双侧精确 McNemar `p = 0.000093 < 1e-4`）**，对 `vanilla_latent_visonly` **`+22 / −16`（`+1.90 pp`）** 呈现清晰 Mech A + Mech B 协同净增益；**7/7 题型全胜 `vanilla_text`**（`MHR +12`, `SR +12`, `TCI +7`, `CTI +3`, `IMC +3`, `PAR +1`, `TA +1`），在 `n = 246` 改道子集达 **`39.43% vs 27.24%`（`+12.19 pp`）**，100% Training-Free 超越已发表同基座 RL 模型 `VideoChat-R1-7B (33.0%)`、`SEED-Bench-R1-7B (33.5%)` 与 `Video-R1-7B (36.5%)`！
+- **单卡续跑状态**：A40 GPU 0（`PID 3905127`, `run_qwen25vl_main --gpu 0 --max-steps 8 --suites holmes315,mme306,lvb306 --refresh-mech-b`）已自动切入 `mme306_s8`（`N = 306`），随后自动跑 `lvb306_s8`（`N = 306`）；GPU 1 & 2 严格保持 `0 MiB`。
+
 **2026-11-26 晚至 2026-11-27 早三卡 A40 通宵实验全量关账，全部占用 GPU（GPU 0/1/2）已于 07:45:39 CST 准时自动归零释放（`0 MiB`, `0%`，提前 14 分钟归还，全程未触碰 GPU 3），所有封存评分回执已同步至 `wangyam1/LAVE2027`。**
 - **Video-MME 216 多步评测（`score_mme.json`: `df6f2fad...`）**：216 独立视频（Short 72 / Medium 72 / Long 72，12 题型均衡），`vanilla_text 125/216 (57.87%)` → `lave_route_text 131 (60.65%, +2.78 pp)` → **`lave_full 138 (63.89%, +26/−13, +6.02 pp, p = 0.053)`** → **`vanilla_latent_qa 141 (65.28%, +23/−7, +7.41 pp, p = 0.00522)`**；Short/Medium/Long **全三档零回退**，同时 LAVE 减少视觉调用 **`−8.7%`**（`3.04 vs 3.33`）与采样帧数 `64.67 vs 69.26`（`440/441` 控制通过）。
 - **LongVideoBench-150 多步评测（`score_lvb150_multistep.json`: `cf8d73d0...`）**：沿用冻结 `PIN 27b9d833...`（150 题 / 146 独立长视频 / 17 类），`lave_route_text` **`87/150 (58.00%)`** vs `vanilla_text 85/150 (56.67%)`（`+1.33 pp`），其中 **超长 1 小时分桶（`dg=3600`, `n=101`）大涨 `+5.94 pp`（`59.41% vs 53.47%`）**；均题视觉调用 `−6.0%`（`4.73 vs 5.03`）、帧数 `−4.8`（`91.63 vs 96.43`）。三大多步基准合并（`N = 506`）：`vanilla_text 49.41%` → `lave_route_text 52.96% (+3.56 pp)` / `lave_full 53.36% (+3.95 pp)`，且 3/3 基准全部同步省步数、省调用、省帧数。
