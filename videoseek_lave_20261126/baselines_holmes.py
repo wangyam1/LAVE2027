@@ -21,6 +21,7 @@ from .agent import (
 from .prompts import (
     ACTION_PARSER_PROMPT,
     build_videoseek_tools,
+    filter_nonempty_observations,
     format_mc_question,
     render_latent_readout_prompt,
 )
@@ -84,9 +85,20 @@ class ClockSplitRunner(VideoSeekLaveRunner):
     """Equal-budget 50/50 geometric split-budget control (ZERO LAVE visual-state receiver)."""
 
     def _run_uniform_bank_qa(self, bank, question_text, valid_letters, trajectory_brief, planner_reasoning=""):
-        """Zero-pixel verification over 8 uniformly spaced bank frames (no LAVE lift ranking)."""
+        """Zero-pixel verification over M uniformly spaced bank frames (no LAVE lift ranking; Option B clean & visonly)."""
         if not bank:
-            return dict(answer=None, raw_text="", selected_timestamps=[], num_frames=0, visual_tokens=0, visual_forwards=0, seconds=0.0)
+            return dict(
+                answer=None,
+                raw_text="",
+                answer_visual_only=None,
+                raw_text_visual_only="",
+                mech_b_version="option_b_clean",
+                selected_timestamps=[],
+                num_frames=0,
+                visual_tokens=0,
+                visual_forwards=0,
+                seconds=0.0,
+            )
         sorted_bank = sorted(bank, key=lambda e: float(e["timestamp_s"]))
         k = min(self.cfg.latent_qa_frames, len(sorted_bank))
         idxs = [int(round(x)) for x in np.linspace(0, len(sorted_bank) - 1, k)]
@@ -105,22 +117,41 @@ class ClockSplitRunner(VideoSeekLaveRunner):
             valid_letters,
             sel_meta,
             trajectory_brief,
-            planner_reasoning=planner_reasoning,
+            visual_only=False,
         )
         gen = self.engine.generate_from_visual_embeds(
             qa_prompt, sel_slots, sel_grids, max_tokens=self.cfg.answer_max_tokens
         )
         if gen["visual_forwards"] != 0:
             raise RuntimeError("Uniform bank QA violated zero-vision invariant!")
+
+        vo_prompt = render_latent_readout_prompt(
+            self.engine.tokenizer,
+            question_text,
+            valid_letters,
+            sel_meta,
+            "",
+            visual_only=True,
+        )
+        gen_vo = self.engine.generate_from_visual_embeds(
+            vo_prompt, sel_slots, sel_grids, max_tokens=self.cfg.answer_max_tokens
+        )
+        if gen_vo["visual_forwards"] != 0:
+            raise RuntimeError("Uniform bank visual-only QA violated zero-vision invariant!")
+
         return dict(
             answer=extract_choice_letter(gen["text"], valid_letters),
             raw_text=gen["text"].strip(),
+            answer_visual_only=extract_choice_letter(gen_vo["text"], valid_letters),
+            raw_text_visual_only=gen_vo["text"].strip(),
+            mech_b_version="option_b_clean",
             selected_timestamps=[m["timestamp_s"] for m in sel_meta],
             selected_tools=[m["tool"] for m in sel_meta],
             num_frames=gen["num_frames"],
             visual_tokens=gen["visual_tokens"],
             visual_forwards=0,
             seconds=gen["seconds"],
+            visonly_seconds=round(gen_vo["seconds"], 3),
         )
 
     def run_clock_split(self, case, shared_overview, *, tool_cache=None):
@@ -159,7 +190,29 @@ class ClockSplitRunner(VideoSeekLaveRunner):
         final_text_raw = ""
         step4_text_answer = None
         step4_frames = None
+        step6_text_answer = None
+        step6_frames = None
         finish_reason = "reach_max_steps"
+
+        def _query_final_choice(prefix_line=""):
+            ans_msgs = list(messages) + [{
+                "role": "user",
+                "content": (
+                    f"{prefix_line}"
+                    f"Question:\n{question_text}\n\n"
+                    f"Even if the evidence is partial, you MUST commit to the single best option letter "
+                    f"({', '.join(valid_letters)}). Do NOT refuse or say 'No relevant content found.'\n"
+                    f"Respond with ONLY one uppercase letter."
+                ),
+            }]
+            ans_out = self.engine.generate_text(ans_msgs, max_tokens=self.cfg.answer_max_tokens)
+            raw = ans_out["text"].strip()
+            ch = extract_choice_letter(raw, valid_letters)
+            if ch is None and hasattr(self.engine, "generate_choice_letter"):
+                ch = self.engine.generate_choice_letter(ans_msgs, valid_letters)
+                if ch is not None:
+                    raw = f"{raw} [forced:{ch}]".strip()
+            return ch, raw, ans_out["seconds"]
 
         for step_id in range(2, self.cfg.max_steps + 1):
             messages.append({
@@ -204,15 +257,9 @@ class ClockSplitRunner(VideoSeekLaveRunner):
             args = dict(action.get("arguments") or {})
 
             if tname == "answer":
-                ans_msgs = list(messages) + [{
-                    "role": "user",
-                    "content": f"Question:\n{question_text}\n\nRespond with ONLY the single best option letter ({', '.join(valid_letters)}).",
-                }]
-                ans_out = self.engine.generate_text(ans_msgs, max_tokens=self.cfg.answer_max_tokens)
-                final_text_raw = ans_out["text"].strip()
-                final_text_answer = extract_choice_letter(final_text_raw, valid_letters)
+                final_text_answer, final_text_raw, ans_sec = _query_final_choice()
                 finish_reason = "answer_tool"
-                steps_log.append(dict(step_id=step_id, tool="answer", arguments={}, frames=0, rerouted=False, seconds=ans_out["seconds"]))
+                steps_log.append(dict(step_id=step_id, tool="answer", arguments={}, frames=0, rerouted=False, seconds=ans_sec))
                 break
 
             if tname == "overview":
@@ -227,6 +274,11 @@ class ClockSplitRunner(VideoSeekLaveRunner):
             raw_e = float(args.get("end_time", min(duration, raw_s + 16.0)))
             if raw_e < raw_s:
                 raw_s, raw_e = raw_e, raw_s
+            if (raw_e - raw_s) < 2.0:
+                pad = 6.0 if tname == "focus" else 15.0
+                mid = 0.5 * (raw_s + raw_e)
+                raw_s = max(0.0, mid - pad)
+                raw_e = min(duration, mid + pad)
             p_start = max(0.0, min(raw_s, max(0.0, duration - 1.0)))
             p_end = max(p_start + 1.0, min(raw_e, duration))
             if tname == "focus" and (p_end - p_start) > self.cfg.focus_max_span:
@@ -275,32 +327,27 @@ class ClockSplitRunner(VideoSeekLaveRunner):
             ))
 
             if step_id == 4 and step4_text_answer is None and self.cfg.max_steps > 4:
-                s4_msgs = list(messages) + [{
-                    "role": "user",
-                    "content": f"You have reached the maximum number of steps.\nQuestion:\n{question_text}\n\nRespond with ONLY the single best option letter ({', '.join(valid_letters)}).",
-                }]
-                s4_out = self.engine.generate_text(s4_msgs, max_tokens=self.cfg.answer_max_tokens)
-                step4_text_answer = extract_choice_letter(s4_out["text"].strip(), valid_letters)
+                step4_text_answer, _, _ = _query_final_choice("You have reached the maximum number of steps.\n")
                 step4_frames = total_frames
+            if step_id == 6 and step6_text_answer is None and self.cfg.max_steps > 6:
+                step6_text_answer, _, _ = _query_final_choice("You have reached the maximum number of steps.\n")
+                step6_frames = total_frames
 
         if final_text_answer is None:
-            ans_msgs = list(messages) + [{
-                "role": "user",
-                "content": f"You have reached the maximum number of steps.\nQuestion:\n{question_text}\n\nRespond with ONLY the single best option letter ({', '.join(valid_letters)}).",
-            }]
-            ans_out = self.engine.generate_text(ans_msgs, max_tokens=self.cfg.answer_max_tokens)
-            final_text_raw = ans_out["text"].strip()
-            final_text_answer = extract_choice_letter(final_text_raw, valid_letters)
+            final_text_answer, final_text_raw, _ = _query_final_choice("You have reached the maximum number of steps.\n")
 
         if step4_text_answer is None:
             step4_text_answer = final_text_answer
             step4_frames = total_frames
+        if step6_text_answer is None:
+            step6_text_answer = final_text_answer
+            step6_frames = total_frames
 
-        traj_brief = "\n\n".join(
+        obs_blocks = [
             m["content"][:1200] for m in messages if m["role"] == "user" and m["content"].startswith("Observation")
-        )
-        planner_thoughts = "\n\n".join(m["content"][:600] for m in messages if m["role"] == "assistant")
-        uniform_qa = self._run_uniform_bank_qa(bank, question_text, valid_letters, traj_brief, planner_thoughts)
+        ]
+        traj_brief = filter_nonempty_observations(obs_blocks)
+        uniform_qa = self._run_uniform_bank_qa(bank, question_text, valid_letters, traj_brief, planner_reasoning="")
 
         return dict(
             finish_reason=finish_reason,
@@ -308,10 +355,12 @@ class ClockSplitRunner(VideoSeekLaveRunner):
             visual_tool_calls=visual_tool_calls,
             total_frames=total_frames,
             step4_frames=step4_frames,
+            step6_frames=step6_frames,
             total_vision_calls=total_vision_calls,
             reroute_count=reroute_count,
             text_answer=final_text_answer,
             step4_text_answer=step4_text_answer,
+            step6_text_answer=step6_text_answer,
             text_answer_raw=final_text_raw,
             uniform_qa=uniform_qa,
             steps=steps_log,
@@ -415,7 +464,40 @@ class VideoSeekImageRunner:
         final_raw = ""
         step4_answer = None
         step4_frames = None
+        step6_answer = None
+        step6_frames = None
         finish_reason = "reach_max_steps"
+
+        def _query_mm_choice(prefix_line=""):
+            ans_instr = (
+                f"{prefix_line}"
+                f"Question:\n{question_text}\n\n"
+                f"Based directly on all the video frames shown above, you MUST commit to the single best option letter "
+                f"({', '.join(valid_letters)}). Do NOT refuse.\n"
+                f"Respond with ONLY one uppercase letter."
+            )
+            ans_msgs, ans_imgs, pr_n = self._build_mm_messages(
+                duration, question_text, visual_entries, thought_history, ans_instr
+            )
+            ans_out = self.engine.generate_vlm(ans_msgs, ans_imgs, max_tokens=self.cfg.answer_max_tokens)
+            raw = ans_out["text"].strip()
+            ch = extract_choice_letter(raw, valid_letters)
+            if ch is None and hasattr(self.engine, "generate_choice_letter"):
+                fb_msgs = [
+                    {"role": "system", "content": "Output only one uppercase option letter."},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Question:\n{question_text}\n\n"
+                            f"Visual reasoning summary:\n" + "\n".join(thought_history[-3:]) + "\n\n"
+                            f"Respond with ONLY one uppercase letter ({', '.join(valid_letters)})."
+                        ),
+                    },
+                ]
+                ch = self.engine.generate_choice_letter(fb_msgs, valid_letters)
+                if ch is not None:
+                    raw = f"{raw} [forced:{ch}]".strip()
+            return ch, raw, ans_out, len(ans_imgs), pr_n
 
         for step_id in range(2, self.cfg.max_steps + 1):
             instr = (
@@ -462,21 +544,14 @@ class VideoSeekImageRunner:
 
             if tname == "answer":
                 thought_history.append(thought)
-                ans_instr = (
-                    f"Question:\n{question_text}\n\n"
-                    f"Based directly on all the video frames shown above, respond with ONLY the single best option letter ({', '.join(valid_letters)})."
-                )
-                ans_msgs, ans_imgs, pr2 = self._build_mm_messages(duration, question_text, visual_entries, thought_history, ans_instr)
+                final_answer, final_raw, ans_out, n_ans_imgs, pr2 = _query_mm_choice()
                 total_pruned += pr2
-                ans_out = self.engine.generate_vlm(ans_msgs, ans_imgs, max_tokens=self.cfg.answer_max_tokens)
                 vlm_turns += 1
-                total_frames_fed_vlm += len(ans_imgs)
+                total_frames_fed_vlm += n_ans_imgs
                 total_prompt_tokens += int(ans_out.get("prompt_tokens", 0))
                 total_output_tokens += int(ans_out.get("output_tokens", 0))
-                final_raw = ans_out["text"].strip()
-                final_answer = extract_choice_letter(final_raw, valid_letters)
                 finish_reason = "answer_tool"
-                steps_log.append(dict(step_id=step_id, tool="answer", frames=0, context_frames=len(ans_imgs), seconds=round(th_out["seconds"] + ans_out["seconds"], 3)))
+                steps_log.append(dict(step_id=step_id, tool="answer", frames=0, context_frames=n_ans_imgs, seconds=round(th_out["seconds"] + ans_out["seconds"], 3)))
                 break
 
             if tname == "overview":
@@ -488,6 +563,11 @@ class VideoSeekImageRunner:
             raw_e = float(args.get("end_time", min(duration, raw_s + 16.0)))
             if raw_e < raw_s:
                 raw_s, raw_e = raw_e, raw_s
+            if (raw_e - raw_s) < 2.0:
+                pad = 6.0 if tname == "focus" else 15.0
+                mid = 0.5 * (raw_s + raw_e)
+                raw_s = max(0.0, mid - pad)
+                raw_e = min(duration, mid + pad)
             p_start = max(0.0, min(raw_s, max(0.0, duration - 1.0)))
             p_end = max(p_start + 1.0, min(raw_e, duration))
             if tname == "focus" and (p_end - p_start) > self.cfg.focus_max_span:
@@ -522,33 +602,28 @@ class VideoSeekImageRunner:
             ))
 
             if step_id == 4 and step4_answer is None and self.cfg.max_steps > 4:
-                s4_instr = (
-                    f"You have reached the maximum number of steps.\nQuestion:\n{question_text}\n\n"
-                    f"Respond with ONLY the single best option letter ({', '.join(valid_letters)})."
-                )
-                s4_msgs, s4_imgs, _ = self._build_mm_messages(duration, question_text, visual_entries, thought_history, s4_instr)
-                s4_out = self.engine.generate_vlm(s4_msgs, s4_imgs, max_tokens=self.cfg.answer_max_tokens)
-                step4_answer = extract_choice_letter(s4_out["text"].strip(), valid_letters)
+                step4_answer, _, _, _, _ = _query_mm_choice("You have reached the maximum number of steps.\n")
                 step4_frames = total_frames_acquired
+            if step_id == 6 and step6_answer is None and self.cfg.max_steps > 6:
+                step6_answer, _, _, _, _ = _query_mm_choice("You have reached the maximum number of steps.\n")
+                step6_frames = total_frames_acquired
 
         if final_answer is None:
-            ans_instr = (
-                f"You have reached the maximum number of steps.\nQuestion:\n{question_text}\n\n"
-                f"Respond with ONLY the single best option letter ({', '.join(valid_letters)})."
+            final_answer, final_raw, ans_out, n_ans_imgs, pr3 = _query_mm_choice(
+                "You have reached the maximum number of steps.\n"
             )
-            ans_msgs, ans_imgs, pr3 = self._build_mm_messages(duration, question_text, visual_entries, thought_history, ans_instr)
             total_pruned += pr3
-            ans_out = self.engine.generate_vlm(ans_msgs, ans_imgs, max_tokens=self.cfg.answer_max_tokens)
             vlm_turns += 1
-            total_frames_fed_vlm += len(ans_imgs)
+            total_frames_fed_vlm += n_ans_imgs
             total_prompt_tokens += int(ans_out.get("prompt_tokens", 0))
             total_output_tokens += int(ans_out.get("output_tokens", 0))
-            final_raw = ans_out["text"].strip()
-            final_answer = extract_choice_letter(final_raw, valid_letters)
 
         if step4_answer is None:
             step4_answer = final_answer
             step4_frames = total_frames_acquired
+        if step6_answer is None:
+            step6_answer = final_answer
+            step6_frames = total_frames_acquired
 
         return dict(
             finish_reason=finish_reason,
@@ -557,16 +632,39 @@ class VideoSeekImageRunner:
             vlm_turns=vlm_turns,
             total_frames=total_frames_acquired,
             step4_frames=step4_frames,
+            step6_frames=step6_frames,
             total_frames_fed_vlm=total_frames_fed_vlm,
             pruned_frames=total_pruned,
             total_prompt_tokens=total_prompt_tokens,
             total_output_tokens=total_output_tokens,
             answer=final_answer,
             step4_answer=step4_answer,
+            step6_answer=step6_answer,
             raw_text=final_raw,
             steps=steps_log,
             elapsed_seconds=round(perf_counter() - t_start, 3),
         )
+
+
+def _stage_breakdown(ov_s, traj, total_s):
+    """Break down standalone wall-clock time into overview, skim/focus, receiver, readout, and planner/parser."""
+    skim_focus_s = sum(
+        float(st.get("seconds", 0.0)) for st in traj["steps"] if st.get("tool") in ("skim", "focus")
+    )
+    rx_s = float(traj.get("receiver_seconds", 0.0))
+    lat = traj.get("latent_qa") or {}
+    readout_clean_s = float(lat.get("seconds", 0.0))
+    readout_vo_s = float(lat.get("visonly_seconds", 0.0))
+    readout_total_s = readout_clean_s + readout_vo_s
+    planner_s = max(0.0, float(total_s) - float(ov_s) - skim_focus_s - rx_s - readout_total_s)
+    return dict(
+        overview_s=round(float(ov_s), 3),
+        skim_focus_s=round(skim_focus_s, 3),
+        planner_parser_s=round(planner_s, 3),
+        receiver_s=round(rx_s, 3),
+        readout_clean_s=round(readout_clean_s, 3),
+        readout_visonly_s=round(readout_vo_s, 3),
+    )
 
 
 def run_standalone_unshared_latency(engine, cfg, case, ordinal):
@@ -578,22 +676,30 @@ def run_standalone_unshared_latency(engine, cfg, case, ordinal):
     ov_v = runner.run_shared_overview(case["video_path"], float(case["duration"]))
     van = runner._run_trajectory(case, ov_v, use_lave_routing=False, seed_base=ordinal + 10000, tool_cache=None)
     t_van_total = perf_counter() - t0
-    t_van_text_only = round(t_van_total - float(van["latent_qa"]["seconds"]), 3)
+    van_vo_s = float(van["latent_qa"].get("visonly_seconds", 0.0))
+    t_van_text_only = round(t_van_total - float(van["latent_qa"]["seconds"]) - van_vo_s, 3)
 
     # 2. Standalone VideoSeek + LAVE (fresh overview, zero tool_cache)
     t1 = perf_counter()
     ov_l = runner.run_shared_overview(case["video_path"], float(case["duration"]))
     lav = runner._run_trajectory(case, ov_l, use_lave_routing=True, seed_base=ordinal + 20000, tool_cache=None)
-    t_lav_full = perf_counter() - t1
-    t_lav_route_only = round(t_lav_full - float(lav["latent_qa"]["seconds"]), 3)
+    t_lav_total = perf_counter() - t1
+    lav_vo_s = float(lav["latent_qa"].get("visonly_seconds", 0.0))
+    t_lav_route_only = round(t_lav_total - float(lav["latent_qa"]["seconds"]) - lav_vo_s, 3)
 
+    van_rx_score_s = float(van["latent_qa"].get("receiver_score_seconds", van["latent_qa"]["seconds"]))
+    lav_rx_score_s = float(lav["latent_qa"].get("receiver_score_seconds", lav["latent_qa"]["seconds"]))
     return dict(
         vanilla_text_s=t_van_text_only,
-        vanilla_latent_qa_s=round(t_van_total, 3),
+        vanilla_latent_qa_s=round(t_van_total - van_vo_s, 3),
+        vanilla_latent_visonly_s=round(t_van_text_only + van_rx_score_s + van_vo_s, 3),
+        vanilla_stages=_stage_breakdown(ov_v["seconds"], van, t_van_total),
         vanilla_frames=van["total_frames"],
         vanilla_visual_calls=van["visual_tool_calls"],
         lave_route_text_s=t_lav_route_only,
-        lave_full_s=round(t_lav_full, 3),
+        lave_full_s=round(t_lav_total - lav_vo_s, 3),
+        lave_full_visonly_s=round(t_lav_route_only + lav_rx_score_s + lav_vo_s, 3),
+        lave_stages=_stage_breakdown(ov_l["seconds"], lav, t_lav_total),
         lave_receiver_s=lav["receiver_seconds"],
         lave_latent_qa_s=lav["latent_qa"]["seconds"],
         lave_frames=lav["total_frames"],

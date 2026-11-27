@@ -291,12 +291,14 @@ def normalized_positive_entropy(lifts):
     return h / math.log(len(pos))
 
 
-def select_latent_peaks(timestamps_s, lifts, *, min_sep_s=12.0, max_peaks=2, excluded_intervals=()):
+def select_latent_peaks(
+    timestamps_s, lifts, *, min_sep_s=12.0, max_peaks=2, excluded_intervals=(), allow_nonpositive=False
+):
     """Select non-overlapping highest-lift timestamps via NMS, preferring unvisited regions."""
     order = sorted(range(len(lifts)), key=lambda i: float(lifts[i]), reverse=True)
     chosen = []
     for idx in order:
-        if float(lifts[idx]) <= 0.0:
+        if not allow_nonpositive and float(lifts[idx]) <= 0.0:
             break
         t = float(timestamps_s[idx])
         if any(lo <= t <= hi for lo, hi in excluded_intervals):
@@ -418,6 +420,11 @@ class AgentConfig:
     enable_thinking: bool = False
     parser_max_tokens: int = 160
     answer_max_tokens: int = 32
+    # Causal ablation switches (all defaults match production LAVE)
+    use_zero_calibration: bool = True
+    use_self_control_gate: bool = True
+    fixed_max_peaks: int | None = None
+    mech_b_sweep_sizes: tuple[int, ...] = ()
 
 
 _GLOBAL_VLM_CALL_SEQ = 0
@@ -619,36 +626,42 @@ class VideoSeekLaveRunner:
         if res["visual_forwards"] != 0:
             raise RuntimeError("Receiver violated zero-vision-forward invariant!")
 
-        lifts = res["lifts"]
+        if self.cfg.use_zero_calibration:
+            lifts = res["lifts"]
+        else:
+            lifts = [float(sc[0] - sc[1]) for sc in res["real_scores"]]
         best_local = max(range(len(lifts)), key=lambda i: lifts[i])
         best_lift = float(lifts[best_local])
         med_lift = float(median(lifts))
         ent = normalized_positive_entropy(lifts)
 
-        # Single-video Control 1: lift > 0
+        # Single-video Control 1: score > 0
         c_pos = best_lift > 0.0
         # Single-video Control 3: temporal specificity over video median
         c_spec = best_lift > (med_lift + self.cfg.specificity_margin)
 
-        # Single-video Control 2: semantic content vs scrambled same-norm noise (only run if c_pos)
+        # Single-video Control 2: semantic content vs scrambled same-norm noise (only run if gate enabled and c_pos)
         scram_lift = None
         scram_s = 0.0
         scram_fwds = 0
         c_scram = False
-        if c_pos:
+        if self.cfg.use_self_control_gate and c_pos:
             sc = self.engine.score_scrambled_control(
                 prompt_text, scan_slots[best_local], scan_grids[best_local], y_id, n_id, seed=16423 + seed_idx
             )
             if sc["visual_forwards"] != 0:
                 raise RuntimeError("Scrambled control violated zero-vision-forward invariant!")
-            gkey = tuple(int(v) for v in scan_grids[best_local])
-            zy0, zn0 = res["zero_by_grid"][gkey]
-            scram_lift = (sc["score"][0] - sc["score"][1]) - (zy0 - zn0)
+            if self.cfg.use_zero_calibration:
+                gkey = tuple(int(v) for v in scan_grids[best_local])
+                zy0, zn0 = res["zero_by_grid"][gkey]
+                scram_lift = (sc["score"][0] - sc["score"][1]) - (zy0 - zn0)
+            else:
+                scram_lift = float(sc["score"][0] - sc["score"][1])
             c_scram = best_lift > scram_lift
             scram_s = sc["seconds"]
             scram_fwds = sc["forwards"]
 
-        approved = bool(c_pos and c_scram and c_spec)
+        approved = bool(c_pos and c_scram and c_spec) if self.cfg.use_self_control_gate else True
         return dict(
             scan_indices=scan_indices,
             scan_timestamps=scan_ts,
@@ -659,7 +672,13 @@ class VideoSeekLaveRunner:
             median_lift=round(med_lift, 4),
             scrambled_lift=round(float(scram_lift), 4) if scram_lift is not None else None,
             entropy=round(float(ent), 4),
-            controls=dict(positive=c_pos, scrambled=c_scram, specific=c_spec),
+            controls=dict(
+                positive=c_pos,
+                scrambled=c_scram if self.cfg.use_self_control_gate else None,
+                specific=c_spec,
+                gate_enabled=bool(self.cfg.use_self_control_gate),
+                zero_calibrated=bool(self.cfg.use_zero_calibration),
+            ),
             approved=approved,
             forwards=res["forwards"] + scram_fwds,
             visual_forwards=0,
@@ -683,8 +702,13 @@ class VideoSeekLaveRunner:
         if score_res["visual_forwards"] != 0:
             raise RuntimeError("Latent readout selection violated zero-vision invariant!")
 
+        score_vec = (
+            score_res["lifts"]
+            if self.cfg.use_zero_calibration
+            else [float(sc[0] - sc[1]) for sc in score_res["real_scores"]]
+        )
         picked_idx = select_top_bank_entries(
-            bank, score_res["lifts"], max_frames=self.cfg.latent_qa_frames, dedup_tol_s=1.5
+            bank, score_vec, max_frames=self.cfg.latent_qa_frames, dedup_tol_s=1.5
         )
         sel_slots = [bank[i]["slot"] for i in picked_idx]
         sel_grids = [bank[i]["grid"] for i in picked_idx]
@@ -721,7 +745,7 @@ class VideoSeekLaveRunner:
             raise RuntimeError("Visual-only latent readout violated zero-vision invariant!")
         choice_vo = extract_choice_letter(gen_vo["text"], valid_letters)
 
-        return dict(
+        out_dict = dict(
             answer=choice,
             raw_text=gen["text"].strip(),
             answer_visual_only=choice_vo,
@@ -732,9 +756,50 @@ class VideoSeekLaveRunner:
             num_frames=gen["num_frames"],
             visual_tokens=gen["visual_tokens"],
             receiver_forwards=score_res["forwards"],
+            receiver_score_seconds=round(score_res["seconds"], 3),
             visual_forwards=0,
             seconds=round(score_res["seconds"] + gen["seconds"], 3),
+            visonly_seconds=round(gen_vo["seconds"], 3),
         )
+        if self.cfg.mech_b_sweep_sizes:
+            sweep_visonly = {}
+            for m_size in self.cfg.mech_b_sweep_sizes:
+                m_int = int(m_size)
+                if m_int == int(self.cfg.latent_qa_frames):
+                    sweep_visonly[str(m_int)] = dict(
+                        answer=choice_vo,
+                        num_frames=gen_vo["num_frames"],
+                        visual_tokens=gen_vo["visual_tokens"],
+                        visual_forwards=0,
+                        seconds=round(gen_vo["seconds"], 3),
+                    )
+                else:
+                    sw_idx = select_top_bank_entries(bank, score_vec, max_frames=m_int, dedup_tol_s=1.5)
+                    sw_slots = [bank[i]["slot"] for i in sw_idx]
+                    sw_grids = [bank[i]["grid"] for i in sw_idx]
+                    sw_meta = [dict(timestamp_s=bank[i]["timestamp_s"], tool=bank[i]["tool"]) for i in sw_idx]
+                    sw_prompt = render_latent_readout_prompt(
+                        self.engine.tokenizer,
+                        question_text,
+                        valid_letters,
+                        sw_meta,
+                        "",
+                        visual_only=True,
+                    )
+                    sw_gen = self.engine.generate_from_visual_embeds(
+                        sw_prompt, sw_slots, sw_grids, max_tokens=self.cfg.answer_max_tokens
+                    )
+                    if sw_gen["visual_forwards"] != 0:
+                        raise RuntimeError("Sweep latent readout violated zero-vision invariant!")
+                    sweep_visonly[str(m_int)] = dict(
+                        answer=extract_choice_letter(sw_gen["text"], valid_letters),
+                        num_frames=sw_gen["num_frames"],
+                        visual_tokens=sw_gen["visual_tokens"],
+                        visual_forwards=0,
+                        seconds=round(sw_gen["seconds"], 3),
+                    )
+            out_dict["sweep_visonly"] = sweep_visonly
+        return out_dict
 
     def _run_trajectory(self, case, shared_overview, *, use_lave_routing: bool, seed_base: int, tool_cache=None):
         """Run one full multi-step VideoSeek trajectory (vanilla or LAVE-routed) + latent readout."""
@@ -957,14 +1022,18 @@ class VideoSeekLaveRunner:
                 receiver_forwards += lave_audit["forwards"]
                 if lave_audit["approved"]:
                     control_approvals += 1
-                    # Entropy-guided number of latent peaks (1 when concentrated, 2 when spread)
-                    max_p = 1 if lave_audit["entropy"] < 0.72 else 2
+                    # Entropy-guided number of latent peaks (1 when concentrated, 2 when spread), or fixed K for ablation
+                    if self.cfg.fixed_max_peaks is not None:
+                        max_p = int(self.cfg.fixed_max_peaks)
+                    else:
+                        max_p = 1 if lave_audit["entropy"] < 0.72 else 2
                     peak_local_ids = select_latent_peaks(
                         lave_audit["scan_timestamps"],
                         lave_audit["lifts"],
                         min_sep_s=12.0,
                         max_peaks=max_p,
                         excluded_intervals=visited_focus_windows,
+                        allow_nonpositive=not self.cfg.use_self_control_gate,
                     )
                     peak_ts = [lave_audit["scan_timestamps"][i] for i in peak_local_ids]
                     plan = plan_split_budget_timestamps(

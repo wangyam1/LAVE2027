@@ -8,6 +8,8 @@ import unittest
 import torch
 
 from videoseek_lave_20261126.agent import (
+    AgentConfig,
+    VideoSeekLaveRunner,
     choose_geometric_clock_peak,
     extract_choice_letter,
     normalized_positive_entropy,
@@ -17,8 +19,9 @@ from videoseek_lave_20261126.agent import (
     select_top_bank_entries,
     strip_think_tags,
 )
-from videoseek_lave_20261126.baselines_holmes import _thin_image_history
+from videoseek_lave_20261126.baselines_holmes import ClockSplitRunner, _thin_image_history
 from videoseek_lave_20261126.prompts import filter_nonempty_observations
+from videoseek_lave_20261126.run_ablation_holmes315 import make_ablation_config, select_balanced_ordinals
 from videoseek_lave_20261126.engine_ext import concat_multi_image_embeds
 from videoseek_lave_20261126.holmes_inputs import HOLMES_CATEGORIES, build_balanced_holmes_manifests
 from videoseek_lave_20261126.mme_inputs import parse_mme_options
@@ -209,6 +212,111 @@ class TestVideoSeekLaveCPU(unittest.TestCase):
         self.assertIn("blue mug", out)
         self.assertNotIn("No relevant content found", out)
         self.assertNotIn("no relevant content found", out)
+
+    def test_ablation_switches_and_msweep_cpu(self):
+        class _DummyTok:
+            def encode(self, s, add_special_tokens=False):
+                return [ord(c) for c in s]
+
+            def decode(self, ids):
+                return "".join(chr(i) for i in ids)
+
+            def apply_chat_template(self, msgs, tokenize=False, add_generation_prompt=True, **kwargs):
+                return json.dumps(msgs)
+
+        class _MockEngine:
+            def __init__(self):
+                self.tokenizer = _DummyTok()
+                self.scram_calls = 0
+                self.score_calls = 0
+                self.embed_gen_sizes = []
+
+            def score_mixed_grid_slots(self, prompt_text, slots, grids, y_id, n_id):
+                self.score_calls += 1
+                # Slot 0 has high raw margin (5.0) due to high zero baseline (6.0 -> lift -1.0);
+                # Slot 1 has lower raw margin (2.0) but low zero baseline (0.0 -> lift +2.0).
+                real = [(5.0, 0.0), (2.0, 0.0)] + [(0.1, 0.0)] * (len(slots) - 2)
+                lifts = [-1.0, 2.0] + [0.05] * (len(slots) - 2)
+                return dict(
+                    real_scores=real,
+                    zero_by_grid={(1, 16, 28): (6.0, 0.0), (1, 24, 42): (0.0, 0.0)},
+                    lifts=lifts,
+                    forwards=len(slots) + 2,
+                    visual_forwards=0,
+                    seconds=0.1,
+                )
+
+            def score_scrambled_control(self, prompt_text, slot, grid, y_id, n_id, seed=0):
+                self.scram_calls += 1
+                return dict(score=(0.2, 0.0), forwards=1, visual_forwards=0, seconds=0.02)
+
+            def generate_from_visual_embeds(self, prompt_text, slots, grids, max_tokens=32):
+                self.embed_gen_sizes.append(len(slots))
+                return dict(
+                    text="B",
+                    output_tokens=1,
+                    capped=False,
+                    num_frames=len(slots),
+                    visual_tokens=len(slots) * 16,
+                    visual_forwards=0,
+                    seconds=0.05,
+                )
+
+        bank = [
+            dict(slot=torch.zeros(112, 8), grid=(1, 16, 28), timestamp_s=float(i * 10), tool="overview")
+            for i in range(18)
+        ]
+        bank[1]["grid"] = (1, 24, 42)
+        bank[1]["slot"] = torch.zeros(252, 8)
+        bank[1]["tool"] = "focus"
+
+        # 1. Calibrated LAVE picks slot 1 (lift +2.0); w/o zero-calibration picks slot 0 (raw +5.0)
+        eng_cal = _MockEngine()
+        r_cal = VideoSeekLaveRunner(eng_cal, AgentConfig())
+        aud_cal = r_cal._score_bank_and_controls(bank, "Q?", "find", "brief", seed_idx=1)
+        self.assertEqual(aud_cal["best_local"], 1)
+        self.assertTrue(aud_cal["approved"])
+        self.assertEqual(eng_cal.scram_calls, 1)
+
+        eng_nocal = _MockEngine()
+        r_nocal = VideoSeekLaveRunner(eng_nocal, make_ablation_config("no_calib", max_steps=8))
+        aud_nocal = r_nocal._score_bank_and_controls(bank, "Q?", "find", "brief", seed_idx=1)
+        self.assertEqual(aud_nocal["best_local"], 0)
+        self.assertAlmostEqual(aud_nocal["best_lift"], 5.0)
+
+        # 2. w/o self-control gate skips scrambled control and always approves; allow_nonpositive picks argmax
+        eng_ng = _MockEngine()
+        r_ng = VideoSeekLaveRunner(eng_ng, make_ablation_config("no_gate", max_steps=8))
+        aud_ng = r_ng._score_bank_and_controls(bank, "Q?", "find", "brief", seed_idx=1)
+        self.assertTrue(aud_ng["approved"])
+        self.assertEqual(eng_ng.scram_calls, 0)
+        self.assertEqual(select_latent_peaks([10.0, 50.0], [-0.5, -0.2], allow_nonpositive=True, max_peaks=1), [1])
+        self.assertEqual(select_latent_peaks([10.0, 50.0], [-0.5, -0.2], allow_nonpositive=False, max_peaks=1), [])
+
+        # 3. M in {4, 8, 16} sweep executes 1 receiver scan and 0 vision calls across all M sizes
+        eng_sw = _MockEngine()
+        r_sw = VideoSeekLaveRunner(eng_sw, make_ablation_config("lave_msweep", max_steps=8))
+        lat = r_sw._run_latent_readout_answer(bank, "Q?", ("A", "B", "C", "D"), "obs")
+        self.assertEqual(eng_sw.score_calls, 1)
+        self.assertEqual(lat["visual_forwards"], 0)
+        self.assertEqual(sorted(lat["sweep_visonly"].keys()), ["16", "4", "8"])
+        self.assertEqual(lat["sweep_visonly"]["4"]["num_frames"], 4)
+        self.assertEqual(lat["sweep_visonly"]["8"]["num_frames"], 8)
+        self.assertEqual(lat["sweep_visonly"]["16"]["num_frames"], 16)
+
+        # 4. ClockSplitRunner Option B uniform readout emits both clean_obs & visonly with 0 vision calls
+        eng_ck = _MockEngine()
+        r_ck = ClockSplitRunner(eng_ck, AgentConfig(max_steps=8))
+        uq = r_ck._run_uniform_bank_qa(bank, "Q?", ("A", "B", "C", "D"), "obs")
+        self.assertEqual(uq["answer"], "B")
+        self.assertEqual(uq["answer_visual_only"], "B")
+        self.assertEqual(uq["visual_forwards"], 0)
+
+        # 5. Balanced latency subset picks exact target_n across all 7 categories
+        fake_cases = [dict(id=f"c{i}", question_category=HOLMES_CATEGORIES[i % 7]) for i in range(315)]
+        ords = select_balanced_ordinals(fake_cases, target_n=60)
+        self.assertEqual(len(ords), 60)
+        self.assertEqual(len(set(ords)), 60)
 
 
 if __name__ == "__main__":
