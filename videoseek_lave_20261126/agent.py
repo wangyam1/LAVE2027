@@ -158,32 +158,27 @@ def parse_tool_call(raw_text, valid_tools=("overview", "skim", "focus", "answer"
         if name in valid_tools:
             return dict(name=name, arguments=params, parse_mode="qwen_xml")
 
-    # Pattern 2: <tool_call>{"name": ..., "arguments": ...}</tool_call>
-    for m_json in re.finditer(r"<tool_call>\s*(\{[\s\S]*?\})\s*</tool_call>", text):
+    # Pattern 2 & 3: Balanced JSON extraction via JSONDecoder.raw_decode (handles nested arguments
+    # with or without closing </tool_call> tag!)
+    decoder = json.JSONDecoder()
+    search_pos = 0
+    while True:
+        brace = text.find("{", search_pos)
+        if brace < 0:
+            break
         try:
-            obj = json.loads(m_json.group(1))
-            name = str(obj.get("name", "")).strip().lower()
-            args = obj.get("arguments") or {}
-            if isinstance(args, str):
-                args = json.loads(args)
-            if name in valid_tools and isinstance(args, dict):
-                return dict(name=name, arguments=args, parse_mode="tool_call_json")
+            obj, end_pos = decoder.raw_decode(text, brace)
+            if isinstance(obj, dict) and "name" in obj:
+                name = str(obj.get("name", "")).strip().lower()
+                args = obj.get("arguments") or {}
+                if isinstance(args, str):
+                    args = json.loads(args)
+                if name in valid_tools and isinstance(args, dict):
+                    mode = "tool_call_json" if "<tool_call>" in text[:brace] else "bare_json"
+                    return dict(name=name, arguments=args, parse_mode=mode)
+            search_pos = max(brace + 1, end_pos)
         except Exception:
-            pass
-
-    # Pattern 3: bare JSON object with "name"
-    m_bare = re.search(r"\{\s*\"name\"\s*:\s*\"([a-zA-Z0-9_]+)\"[\s\S]*?\}", text)
-    if m_bare:
-        try:
-            obj = json.loads(m_bare.group(0))
-            name = str(obj.get("name", "")).strip().lower()
-            args = obj.get("arguments") or {}
-            if isinstance(args, str):
-                args = json.loads(args)
-            if name in valid_tools and isinstance(args, dict):
-                return dict(name=name, arguments=args, parse_mode="bare_json")
-        except Exception:
-            pass
+            search_pos = brace + 1
 
     # Pattern 4: function-like call with keyword OR positional arguments
     # Handles: focus(query="...", start_time=10, end_time=25), skim("query", 0.0, 136.0),

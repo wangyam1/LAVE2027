@@ -73,6 +73,12 @@ class TestVideoSeekLaveCPU(unittest.TestCase):
         self.assertEqual(parse_tool_call("answer")["name"], "answer")
         self.assertEqual(parse_tool_call("answer with start_time=0.0s and end_time=248.0s.")["name"], "answer")
 
+        # Qwen2.5-VL <tool_call>{...} without closing </tool_call> tag
+        p8 = parse_tool_call('<tool_call>{"name": "skim", "arguments": {"query": "core theme", "start_time": 0.0, "end_time": 136.0}}')
+        self.assertEqual(p8["name"], "skim")
+        self.assertAlmostEqual(p8["arguments"]["end_time"], 136.0)
+        self.assertEqual(p8["arguments"]["query"], "core theme")
+
     def test_extract_choice_letter(self):
         valid = ("A", "B", "C", "D", "E", "F")
         self.assertEqual(extract_choice_letter("F", valid), "F")
