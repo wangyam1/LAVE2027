@@ -185,6 +185,24 @@ def render_lave_receiver_prompt(tokenizer, question_text, query, trajectory_brie
     return rendered, tuple(labels)
 
 
+def filter_nonempty_observations(obs_blocks):
+    """Drop empty 'No relevant content found.' tool outputs so Mechanism B readout is never poisoned by refusal noise."""
+    kept = []
+    for blk in obs_blocks:
+        s = (blk or "").strip()
+        if not s:
+            continue
+        low = s.lower()
+        # Check the body after the first colon/newline if prefixed with 'Observation from ...:'
+        body = s.split(":\n", 1)[1].strip().lower() if ":\n" in s else low
+        if body in ("no relevant content found.", "no relevant content found", "none", "none."):
+            continue
+        if body.startswith("no relevant content found") and len(body) < 60:
+            continue
+        kept.append(s)
+    return "\n\n".join(kept)
+
+
 def render_latent_readout_prompt(
     tokenizer,
     question_text,
@@ -193,15 +211,13 @@ def render_latent_readout_prompt(
     trajectory_brief,
     *,
     planner_reasoning="",
+    visual_only=False,
 ):
-    """Build zero-pixel multi-frame latent visual verification prompt over top-M cached states + full reasoning."""
+    """Option-B zero-pixel visual-state readout: visual frames lead, empty refusal noise & biased text anchoring removed."""
     clean_q = question_text.replace("<|", "")
-    clean_brief = (trajectory_brief or "").replace("<|", "")
-    if len(clean_brief) > 4000:
-        clean_brief = clean_brief[:1800] + "\n...\n" + clean_brief[-2000:]
-    clean_reason = (planner_reasoning or "").replace("<|", "").strip()
-    if len(clean_reason) > 1500:
-        clean_reason = clean_reason[-1500:]
+    clean_brief = (trajectory_brief or "").replace("<|", "").strip()
+    if len(clean_brief) > 2400:
+        clean_brief = clean_brief[:1200] + "\n...\n" + clean_brief[-1100:]
 
     frame_lines = []
     for item in selected_meta:
@@ -211,28 +227,38 @@ def render_latent_readout_prompt(
     frames_block = "\n".join(frame_lines)
     letters_str = ", ".join(valid_letters)
 
-    reason_block = f"Agent's multi-step reasoning so far:\n{clean_reason}\n\n" if clean_reason else ""
+    if visual_only or not clean_brief:
+        user_msg = (
+            f"Key visual frames retrieved from the video (chronological):\n"
+            f"{frames_block}\n\n"
+            f"Question:\n{clean_q}\n\n"
+            f"Carefully inspect the visual frames above directly and commit to the single best option letter "
+            f"({letters_str}). Respond with ONLY one uppercase letter and nothing else."
+        )
+        sys_msg = (
+            "You are an expert multimodal video question-answering model. "
+            "Base your answer directly on visual evidence in the retrieved frames. "
+            "Output ONLY a single uppercase option letter."
+        )
+    else:
+        user_msg = (
+            f"Key visual frames retrieved from the video (chronological):\n"
+            f"{frames_block}\n\n"
+            f"Supporting timeline context (non-empty observations only):\n{clean_brief}\n\n"
+            f"Question:\n{clean_q}\n\n"
+            f"Inspect the retrieved visual frames above as your primary evidence, using the timeline context only for broader context. "
+            f"Commit to the single best option letter ({letters_str}). "
+            f"Respond with ONLY one uppercase letter and nothing else."
+        )
+        sys_msg = (
+            "You are an expert multimodal video question-answering model. "
+            "Prioritize direct visual evidence from the retrieved frames over text summaries. "
+            "Output ONLY a single uppercase option letter."
+        )
 
-    user_msg = (
-        f"Top retrieved key visual frames from the video (chronological):\n"
-        f"{frames_block}\n\n"
-        f"Collected text observations:\n{clean_brief}\n\n"
-        f"{reason_block}"
-        f"Question:\n{clean_q}\n\n"
-        f"Verify the multi-step reasoning directly against the retrieved visual frames above. "
-        f"Keep the reasoned choice if the frames agree, or correct it if the frames show clearer direct visual evidence. "
-        f"Respond with ONLY the single best option letter ({letters_str}) and nothing else."
-    )
     rendered = tokenizer.apply_chat_template(
         [
-            {
-                "role": "system",
-                "content": (
-                    "You are an expert multimodal video reasoning verifier. "
-                    "Integrate the agent's multi-step causal reasoning with direct visual inspection of the retrieved frames. "
-                    "Output ONLY a single uppercase option letter."
-                ),
-            },
+            {"role": "system", "content": sys_msg},
             {"role": "user", "content": user_msg},
         ],
         tokenize=False,

@@ -18,6 +18,7 @@ from videoseek_lave_20261126.agent import (
     strip_think_tags,
 )
 from videoseek_lave_20261126.baselines_holmes import _thin_image_history
+from videoseek_lave_20261126.prompts import filter_nonempty_observations
 from videoseek_lave_20261126.engine_ext import concat_multi_image_embeds
 from videoseek_lave_20261126.holmes_inputs import HOLMES_CATEGORIES, build_balanced_holmes_manifests
 from videoseek_lave_20261126.mme_inputs import parse_mme_options
@@ -195,6 +196,19 @@ class TestVideoSeekLaveCPU(unittest.TestCase):
         self.assertGreater(pruned, 0)
         # Most recent focus entry stays completely intact
         self.assertEqual(len(kept[-1]["images"]), 16)
+
+    def test_filter_nonempty_observations(self):
+        blocks = [
+            "Observation from `overview()`:\n0.0s: A man walks in.",
+            "Observation from `skim` (0.0s-50.0s):\nNo relevant content found.",
+            "Observation from `focus` (10.0s-20.0s):\nThe man holds a blue mug.",
+            "Observation from `focus` (60.0s-70.0s):\n  no relevant content found  ",
+        ]
+        out = filter_nonempty_observations(blocks)
+        self.assertIn("A man walks in.", out)
+        self.assertIn("blue mug", out)
+        self.assertNotIn("No relevant content found", out)
+        self.assertNotIn("no relevant content found", out)
 
 
 if __name__ == "__main__":

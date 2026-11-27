@@ -14,6 +14,7 @@ from .prompts import (
     ACTION_PARSER_PROMPT,
     VIDEOSEEK_SYSTEM_PROMPT,
     build_videoseek_tools,
+    filter_nonempty_observations,
     format_mc_question,
     render_latent_readout_prompt,
     render_lave_receiver_prompt,
@@ -695,7 +696,7 @@ class VideoSeekLaveRunner:
             valid_letters,
             sel_meta,
             trajectory_brief,
-            planner_reasoning=planner_reasoning,
+            visual_only=False,
         )
         gen = self.engine.generate_from_visual_embeds(
             qa_prompt, sel_slots, sel_grids, max_tokens=self.cfg.answer_max_tokens
@@ -703,9 +704,29 @@ class VideoSeekLaveRunner:
         if gen["visual_forwards"] != 0:
             raise RuntimeError("Latent readout answering violated zero-vision invariant!")
         choice = extract_choice_letter(gen["text"], valid_letters)
+
+        # Also run pure visual-only readout (0 text notes, 0 extra vision calls, ~0.2s) for clean attribution
+        vo_prompt = render_latent_readout_prompt(
+            self.engine.tokenizer,
+            question_text,
+            valid_letters,
+            sel_meta,
+            "",
+            visual_only=True,
+        )
+        gen_vo = self.engine.generate_from_visual_embeds(
+            vo_prompt, sel_slots, sel_grids, max_tokens=self.cfg.answer_max_tokens
+        )
+        if gen_vo["visual_forwards"] != 0:
+            raise RuntimeError("Visual-only latent readout violated zero-vision invariant!")
+        choice_vo = extract_choice_letter(gen_vo["text"], valid_letters)
+
         return dict(
             answer=choice,
             raw_text=gen["text"].strip(),
+            answer_visual_only=choice_vo,
+            raw_text_visual_only=gen_vo["text"].strip(),
+            mech_b_version="option_b_clean",
             selected_timestamps=[m["timestamp_s"] for m in sel_meta],
             selected_tools=[m["tool"] for m in sel_meta],
             num_frames=gen["num_frames"],
@@ -1026,15 +1047,13 @@ class VideoSeekLaveRunner:
             step6_text_answer = final_text_answer
             step6_frames = total_frames
 
-        # Mechanism B: Zero-pixel Latent-Retrieved Visual Verification preserving Planner's multi-step reasoning
-        traj_brief = "\n\n".join(
+        # Mechanism B (Option B): Zero-pixel Latent-Retrieved Visual Verification (empty-refusal filtered, visual-first)
+        obs_blocks = [
             m["content"][:1200] for m in messages if m["role"] == "user" and m["content"].startswith("Observation")
-        )
-        planner_thoughts = "\n\n".join(
-            m["content"][:600] for m in messages if m["role"] == "assistant"
-        )
+        ]
+        traj_brief = filter_nonempty_observations(obs_blocks)
         latent_qa = self._run_latent_readout_answer(
-            bank, question_text, valid_letters, traj_brief, planner_reasoning=planner_thoughts
+            bank, question_text, valid_letters, traj_brief, planner_reasoning=""
         )
 
         return dict(
@@ -1091,10 +1110,12 @@ class VideoSeekLaveRunner:
                 vanilla_step4=vanilla["step4_text_answer"],
                 vanilla_step6=vanilla["step6_text_answer"],
                 vanilla_latent_qa=vanilla["latent_qa"]["answer"],
+                vanilla_latent_visonly=vanilla["latent_qa"].get("answer_visual_only"),
                 lave_route_text=lave["text_answer"],
                 lave_step4=lave["step4_text_answer"],
                 lave_step6=lave["step6_text_answer"],
                 lave_full=lave["latent_qa"]["answer"],
+                lave_full_visonly=lave["latent_qa"].get("answer_visual_only"),
             ),
             elapsed_seconds=round(perf_counter() - t0, 3),
         )

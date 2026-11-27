@@ -18,6 +18,7 @@ os.environ.setdefault("VLLM_ALLOW_INSECURE_SERIALIZATION", "1")
 from .agent import AgentConfig, VideoSeekLaveRunner
 from .engine_ext import MultiStepVLLMLaveEngine
 from .holmes_inputs import sha256_bytes, write_json_canonical
+from .refresh_mech_b import refresh_suite_mech_b
 
 MODEL_PATH = Path("/data1/llj/development/model/Qwen/Qwen2.5-VL-7B-Instruct")
 ROOT = Path(".")
@@ -83,6 +84,7 @@ def main():
     ap.add_argument("--gpu-mem-util", type=float, default=0.90)
     ap.add_argument("--suites", default="holmes140,mme144,lvb150")
     ap.add_argument("--model", default=str(MODEL_PATH))
+    ap.add_argument("--refresh-mech-b", action="store_true")
     args = ap.parse_args()
 
     suites = [s.strip() for s in args.suites.split(",") if s.strip()]
@@ -135,7 +137,7 @@ def main():
 
     engine = None
     runner = None
-    if total_pending > 0:
+    if total_pending > 0 or args.refresh_mech_b:
         engine = MultiStepVLLMLaveEngine(
             args.model,
             max_model_len=24576,
@@ -147,7 +149,19 @@ def main():
             enforce_eager=False,
             mm_processor_kwargs={"size": {"shortest_edge": 65536, "longest_edge": 262144}},
         )
-        runner = VideoSeekLaveRunner(engine, AgentConfig(max_steps=int(args.max_steps)))
+        cfg = AgentConfig(max_steps=int(args.max_steps))
+        runner = VideoSeekLaveRunner(engine, cfg)
+        if args.refresh_mech_b:
+            for s in suites:
+                info = loaded[s]
+                adapted_cases = [adapt_case(c, info["spec"]["adapter"]) for c in info["cases"]]
+                refreshed = refresh_suite_mech_b(engine, cfg, adapted_cases, info["case_dir"], s)
+                if refreshed > 0:
+                    # Recompute done_rows hashes after atomic Option-B refresh
+                    for ordinal, case in enumerate(info["cases"]):
+                        cpath = info["case_dir"] / f"case_{ordinal:03d}.json"
+                        if cpath.exists():
+                            info["done_rows"][case["id"]] = sha256_bytes(cpath.read_bytes())
 
     deadline_epoch = float(os.environ.get("LAVE_DEADLINE_EPOCH", "0") or "0")
     stopped_early = False

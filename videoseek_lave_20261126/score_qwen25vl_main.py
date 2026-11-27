@@ -18,18 +18,23 @@ ARMS_S8 = (
     "vanilla_step4",
     "vanilla_step6",
     "vanilla_latent_qa",
+    "vanilla_latent_visonly",
     "lave_route_text",
     "lave_step4",
     "lave_step6",
     "lave_full",
+    "lave_full_visonly",
 )
 PAIRS_S8 = (
     ("lave_full", "vanilla_text"),
+    ("lave_full_visonly", "vanilla_text"),
     ("lave_full", "vanilla_latent_qa"),
+    ("lave_full_visonly", "vanilla_latent_visonly"),
     ("lave_route_text", "vanilla_text"),
     ("lave_step4", "vanilla_step4"),
     ("lave_step6", "vanilla_step6"),
     ("vanilla_latent_qa", "vanilla_text"),
+    ("vanilla_latent_visonly", "vanilla_text"),
     ("lave_full", "lave_route_text"),
 )
 
