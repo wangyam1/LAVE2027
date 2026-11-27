@@ -31,7 +31,7 @@ BENCHMARKS = {
     ),
     "holmes315": dict(
         manifest="preflight_holmes315.json",
-        expected_pin=None,
+        expected_pin="cc7b42b1c87804770764587ec350d2146295dbd282fa4839ca82ad76628df087",
         limit=315,
         adapter="holmes",
     ),
@@ -43,7 +43,7 @@ BENCHMARKS = {
     ),
     "mme306": dict(
         manifest="preflight_mme306.json",
-        expected_pin=None,
+        expected_pin="46b4df3266d252e85542a4d10fcb8f8c882b6f6bc0fa62a4cf1346e5076a2768",
         limit=306,
         adapter="mme",
     ),
@@ -55,7 +55,7 @@ BENCHMARKS = {
     ),
     "lvb306": dict(
         manifest="preflight_lvb306.json",
-        expected_pin=None,
+        expected_pin="c03b726540f1e25573c60677d119a34edfa6e4e74df4797b26704df14e15d77a",
         limit=306,
         adapter="lvb",
     ),

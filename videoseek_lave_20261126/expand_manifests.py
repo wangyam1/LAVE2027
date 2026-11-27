@@ -36,44 +36,78 @@ def expand_holmes_315(eval140_path, pilot14_path, out_path, *, seed=20261127):
     raw = json.loads(HOLMES_JSON.read_text())
     vmap = {p.stem: p for p in HOLMES_VIDEOS.glob("*.mp4")}
 
-    by_cat_vid = defaultdict(lambda: defaultdict(list))
+    by_cat_vid_new = defaultdict(lambda: defaultdict(list))
+    by_cat_vid_all = defaultdict(lambda: defaultdict(list))
     for item in raw:
         vid = str(item["video ID"])
         cat = str(item["Question Type"])
         qid = f"{vid}__{item['Question ID']}"
-        if vid in vmap and cat in HOLMES_CATEGORIES and qid not in used_qids and vid not in used_vids:
-            by_cat_vid[cat][vid].append(item)
+        if vid in vmap and cat in HOLMES_CATEGORIES and qid not in used_qids:
+            by_cat_vid_all[cat][vid].append(item)
+            if vid not in used_vids:
+                by_cat_vid_new[cat][vid].append(item)
 
     rng = random.Random(seed)
-    add_per_cat = 25  # 140 + 7*25 = 315 total unique videos (45 per cat)
-    added_by_cat = {}
+    add_per_cat = 25  # 140 + 7*25 = 315 total questions (45 per cat, maximizing unique videos)
+    added_by_cat = {c: [] for c in HOLMES_CATEGORIES}
+    chosen_qids = set(used_qids)
     chosen_new_vids = set()
 
-    # Pick rarest categories first so every single appended case is guaranteed a brand-new unique video!
-    cat_order = sorted(HOLMES_CATEGORIES, key=lambda c: len(by_cat_vid[c]))
-    for cat in cat_order:
-        vids = [v for v in by_cat_vid[cat].keys() if v not in chosen_new_vids]
-        rng.shuffle(vids)
-        picked = []
-        for v in vids:
-            if len(picked) >= add_per_cat:
-                break
-            cands = list(by_cat_vid[cat][v])
-            rng.shuffle(cands)
-            picked.append(cands[0])
-            chosen_new_vids.add(v)
-        if len(picked) != add_per_cat:
-            raise RuntimeError(f"Holmes expand {cat}: needed {add_per_cat} unique videos, got {len(picked)}")
-        added_by_cat[cat] = picked
+    # Pass 1: round-robin brand-new unseen videos across categories (maximizes unique video coverage)
+    cat_order = sorted(HOLMES_CATEGORIES, key=lambda c: len(by_cat_vid_new[c]))
+    while True:
+        progressed = False
+        for cat in cat_order:
+            if len(added_by_cat[cat]) >= add_per_cat:
+                continue
+            avail_v = [v for v in by_cat_vid_new[cat].keys() if v not in chosen_new_vids]
+            if not avail_v:
+                continue
+            rng.shuffle(avail_v)
+            v = avail_v[0]
+            cands = [x for x in by_cat_vid_new[cat][v] if f"{x['video ID']}__{x['Question ID']}" not in chosen_qids]
+            if cands:
+                rng.shuffle(cands)
+                pick = cands[0]
+                chosen_qids.add(f"{pick['video ID']}__{pick['Question ID']}")
+                chosen_new_vids.add(v)
+                added_by_cat[cat].append(pick)
+                progressed = True
+        if not progressed:
+            break
+
+    # Pass 2: fill remaining slots per category with unseen question IDs, minimizing questions per video
+    vid_use_count = Counter(c["video_id"] for c in base["cases"])
+    for v in chosen_new_vids:
+        vid_use_count[v] += 1
+    for cat in HOLMES_CATEGORIES:
+        while len(added_by_cat[cat]) < add_per_cat:
+            vids = sorted(by_cat_vid_all[cat].keys(), key=lambda v: (vid_use_count[v], rng.random()))
+            found = False
+            for v in vids:
+                cands = [x for x in by_cat_vid_all[cat][v] if f"{x['video ID']}__{x['Question ID']}" not in chosen_qids]
+                if cands:
+                    rng.shuffle(cands)
+                    pick = cands[0]
+                    chosen_qids.add(f"{pick['video ID']}__{pick['Question ID']}")
+                    vid_use_count[v] += 1
+                    added_by_cat[cat].append(pick)
+                    found = True
+                    break
+            if not found:
+                raise RuntimeError(f"Holmes expand {cat}: needed {add_per_cat}, got {len(added_by_cat[cat])}")
 
     # Round-robin across categories so every prefix slice stays perfectly category-balanced!
     extra_cases = []
+    dur_cache = {}
     for idx in range(add_per_cat):
         for cat in HOLMES_CATEGORIES:
             item = added_by_cat[cat][idx]
             vid = str(item["video ID"])
             vpath = vmap[vid]
-            vmeta = _probe_video_cv2(vpath)
+            if vid not in dur_cache:
+                dur_cache[vid] = _probe_video_cv2(vpath)
+            vmeta = dur_cache[vid]
             cid = f"{vid}__{item['Question ID']}"
             extra_cases.append(
                 dict(
@@ -92,7 +126,6 @@ def expand_holmes_315(eval140_path, pilot14_path, out_path, *, seed=20261127):
     all_cases = list(base["cases"]) + extra_cases
     assert len(all_cases) == 315
     assert len({c["id"] for c in all_cases}) == 315
-    assert len({c["video_id"] for c in all_cases}) == 315
     assert [c["id"] for c in all_cases[:140]] == base["order"]
 
     manifest = dict(
