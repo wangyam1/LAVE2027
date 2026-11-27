@@ -84,6 +84,8 @@ def main():
     ap.add_argument("--gpu-mem-util", type=float, default=0.90)
     ap.add_argument("--suites", default="holmes140,mme144,lvb150")
     ap.add_argument("--model", default=str(MODEL_PATH))
+    ap.add_argument("--mamba-cache-mode", default="auto")
+    ap.add_argument("--enable-thinking", action="store_true")
     ap.add_argument("--refresh-mech-b", action="store_true")
     args = ap.parse_args()
 
@@ -138,6 +140,13 @@ def main():
     engine = None
     runner = None
     if total_pending > 0 or args.refresh_mech_b:
+        mc_arg = str(args.mamba_cache_mode).lower()
+        if mc_arg == "auto":
+            mamba_mode = "align" if "qwen3.5" in str(args.model).lower() else None
+        elif mc_arg in ("none", ""):
+            mamba_mode = None
+        else:
+            mamba_mode = args.mamba_cache_mode
         engine = MultiStepVLLMLaveEngine(
             args.model,
             max_model_len=24576,
@@ -145,11 +154,11 @@ def main():
             gpu_memory_utilization=float(args.gpu_mem_util),
             max_num_seqs=64,
             enable_prefix_caching=True,
-            mamba_cache_mode=None,
+            mamba_cache_mode=mamba_mode,
             enforce_eager=False,
             mm_processor_kwargs={"size": {"shortest_edge": 65536, "longest_edge": 262144}},
         )
-        cfg = AgentConfig(max_steps=int(args.max_steps))
+        cfg = AgentConfig(max_steps=int(args.max_steps), enable_thinking=bool(args.enable_thinking))
         runner = VideoSeekLaveRunner(engine, cfg)
         if args.refresh_mech_b:
             for s in suites:

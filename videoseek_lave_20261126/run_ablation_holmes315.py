@@ -129,8 +129,8 @@ def main():
     ap.add_argument("--gpu", default="0")
     ap.add_argument("--max-steps", type=int, default=8)
     ap.add_argument("--gpu-mem-util", type=float, default=0.90)
-    ap.add_argument("--mamba-cache-mode", default="none")
-    ap.add_argument("--arms", default="clock_split,no_calib,no_gate,fixed_k1,lave_msweep,videoseek_image,unshared_latency")
+    ap.add_argument("--mamba-cache-mode", default="auto")
+    ap.add_argument("--arms", default="videoseek_image,unshared_latency,clock_split,no_calib,no_gate,fixed_k1,lave_msweep")
     ap.add_argument("--latency-n", type=int, default=60)
     ap.add_argument("--limit", type=int, default=315)
     args = ap.parse_args()
@@ -155,7 +155,13 @@ def main():
     run_img = "videoseek_image" in req_arms
     run_lat = "unshared_latency" in req_arms
 
-    mamba_mode = None if str(args.mamba_cache_mode).lower() in ("none", "") else args.mamba_cache_mode
+    mc_arg = str(args.mamba_cache_mode).lower()
+    if mc_arg == "auto":
+        mamba_mode = "align" if "qwen3.5" in str(args.model).lower() else None
+    elif mc_arg in ("none", ""):
+        mamba_mode = None
+    else:
+        mamba_mode = args.mamba_cache_mode
     engine = MultiStepVLLMLaveEngine(
         args.model,
         max_model_len=24576,
@@ -170,60 +176,7 @@ def main():
 
     deadline_epoch = float(os.environ.get("LAVE_DEADLINE_EPOCH", "0") or "0")
 
-    # 1. Shared-overview trajectory ablations (clock_split, no_calib, no_gate, fixed_k1, lave_msweep)
-    if req_traj:
-        traj_dir = root_dir / "traj_bundle"
-        traj_dir.mkdir(parents=True, exist_ok=True)
-        done_rows = {}
-        stopped = False
-        for ordinal, case in enumerate(cases):
-            cpath = traj_dir / f"case_{ordinal:03d}.json"
-            if cpath.exists():
-                existing = json.loads(cpath.read_bytes())
-                if all(a in existing.get("arms", {}) for a in req_traj):
-                    done_rows[case["id"]] = sha256_bytes(cpath.read_bytes())
-                    continue
-            if deadline_epoch > 0 and time() >= deadline_epoch:
-                stopped = True
-                break
-            rec = run_ablation_bundle_for_case(engine, case, ordinal, req_traj, max_steps=int(args.max_steps))
-            rec["model_path"] = args.model
-            done_rows[case["id"]] = write_json_canonical(cpath, rec)
-            print(
-                json.dumps(
-                    dict(
-                        status="traj_case_committed",
-                        tag=args.tag,
-                        ordinal=ordinal,
-                        done=len(done_rows),
-                        total=len(cases),
-                        cid=case["id"],
-                        arms=req_traj,
-                        elapsed_s=rec["elapsed_seconds"],
-                    ),
-                    sort_keys=True,
-                ),
-                flush=True,
-            )
-        if not stopped and len(done_rows) == len(cases):
-            write_json_canonical(
-                traj_dir / "terminal.json",
-                dict(
-                    status="complete",
-                    tag=args.tag,
-                    model=args.model,
-                    max_steps=int(args.max_steps),
-                    pin=actual_pin,
-                    labels=0,
-                    arms=req_traj,
-                    n=len(done_rows),
-                    pid=os.getpid(),
-                    rows=done_rows,
-                ),
-            )
-
-    # 2. Standalone VideoSeek-Image baseline (raw pixels interleaved, zero captions)
-    if run_img:
+    def _run_img_stage():
         img_dir = root_dir / "videoseek_image"
         img_dir.mkdir(parents=True, exist_ok=True)
         img_runner = VideoSeekImageRunner(engine, AgentConfig(max_steps=int(args.max_steps)))
@@ -288,8 +241,7 @@ def main():
                 ),
             )
 
-    # 3. Unshared standalone end-to-end latency audit (balanced n=60 subset)
-    if run_lat:
+    def _run_lat_stage():
         lat_dir = root_dir / "unshared_latency"
         lat_dir.mkdir(parents=True, exist_ok=True)
         lat_ordinals = select_balanced_ordinals(cases, target_n=int(args.latency_n))
@@ -349,6 +301,70 @@ def main():
                     rows=done_rows,
                 ),
             )
+
+    def _run_traj_stage():
+        traj_dir = root_dir / "traj_bundle"
+        traj_dir.mkdir(parents=True, exist_ok=True)
+        done_rows = {}
+        stopped = False
+        for ordinal, case in enumerate(cases):
+            cpath = traj_dir / f"case_{ordinal:03d}.json"
+            if cpath.exists():
+                existing = json.loads(cpath.read_bytes())
+                if all(a in existing.get("arms", {}) for a in req_traj):
+                    done_rows[case["id"]] = sha256_bytes(cpath.read_bytes())
+                    continue
+            if deadline_epoch > 0 and time() >= deadline_epoch:
+                stopped = True
+                break
+            rec = run_ablation_bundle_for_case(engine, case, ordinal, req_traj, max_steps=int(args.max_steps))
+            rec["model_path"] = args.model
+            done_rows[case["id"]] = write_json_canonical(cpath, rec)
+            print(
+                json.dumps(
+                    dict(
+                        status="traj_case_committed",
+                        tag=args.tag,
+                        ordinal=ordinal,
+                        done=len(done_rows),
+                        total=len(cases),
+                        cid=case["id"],
+                        arms=req_traj,
+                        elapsed_s=rec["elapsed_seconds"],
+                    ),
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+        if not stopped and len(done_rows) == len(cases):
+            write_json_canonical(
+                traj_dir / "terminal.json",
+                dict(
+                    status="complete",
+                    tag=args.tag,
+                    model=args.model,
+                    max_steps=int(args.max_steps),
+                    pin=actual_pin,
+                    labels=0,
+                    arms=req_traj,
+                    n=len(done_rows),
+                    pid=os.getpid(),
+                    rows=done_rows,
+                ),
+            )
+
+    # Execute stages in the order they first appear in --arms
+    executed = set()
+    for a in req_arms:
+        if a == "videoseek_image" and "img" not in executed:
+            executed.add("img")
+            _run_img_stage()
+        elif a == "unshared_latency" and "lat" not in executed:
+            executed.add("lat")
+            _run_lat_stage()
+        elif a in TRAJ_ARMS and "traj" not in executed:
+            executed.add("traj")
+            _run_traj_stage()
 
 
 if __name__ == "__main__":

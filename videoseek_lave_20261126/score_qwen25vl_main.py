@@ -75,7 +75,7 @@ def load_gold(adapter):
     raise ValueError(adapter)
 
 
-def score_suite(suite, max_steps=8, check_gpu_release=True):
+def score_suite(suite, max_steps=8, check_gpu_release=True, tag="qwen25vl", model_label=None):
     if os.environ.get("CUDA_VISIBLE_DEVICES") != "":
         raise RuntimeError("Score on CPU with CUDA_VISIBLE_DEVICES=''")
     spec = BENCHMARKS[suite]
@@ -149,9 +149,9 @@ def score_suite(suite, max_steps=8, check_gpu_release=True):
 
     n = len(items)
     result = dict(
-        status=f"qwen25vl_{suite}_s{max_steps}_scored" if n == len(cases) else f"qwen25vl_{suite}_s{max_steps}_partial",
+        status=f"{tag}_{suite}_s{max_steps}_scored" if n == len(cases) else f"{tag}_{suite}_s{max_steps}_partial",
         suite=suite,
-        model="Qwen2.5-VL-7B-Instruct",
+        model=model_label or ("Qwen2.5-VL-7B-Instruct" if tag == "qwen25vl" else tag),
         max_steps=int(max_steps),
         n=n,
         expected_n=len(cases),
@@ -178,7 +178,7 @@ def score_suite(suite, max_steps=8, check_gpu_release=True):
         by_bucket={k: summarize_s8(v) for k, v in sorted(by_bucket.items())},
         by_category={k: summarize_s8(v) for k, v in sorted(by_cat.items())},
     )
-    out_path = ROOT / f"score_qwen25vl_{suite}_s{max_steps}.json"
+    out_path = ROOT / f"score_{tag}_{suite}_s{max_steps}.json"
     sha = write_json_canonical(out_path, result)
     print(json.dumps(dict(score_sha256=sha, **result), indent=2, sort_keys=True), flush=True)
 
@@ -187,4 +187,6 @@ if __name__ == "__main__":
     suite = sys.argv[1]
     ms = int(sys.argv[2]) if len(sys.argv) > 2 else 8
     chk = (sys.argv[3] != "0") if len(sys.argv) > 3 else True
-    score_suite(suite, max_steps=ms, check_gpu_release=chk)
+    tag = sys.argv[4] if len(sys.argv) > 4 else "qwen25vl"
+    mlabel = sys.argv[5] if len(sys.argv) > 5 else None
+    score_suite(suite, max_steps=ms, check_gpu_release=chk, tag=tag, model_label=mlabel)
