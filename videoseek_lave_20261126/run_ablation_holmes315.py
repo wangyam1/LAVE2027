@@ -168,6 +168,7 @@ def main():
         max_num_batched_tokens=32768,
         gpu_memory_utilization=float(args.gpu_mem_util),
         max_num_seqs=64,
+        limit_mm_per_prompt={"image": 64 if run_img else 32},
         enable_prefix_caching=True,
         mamba_cache_mode=mamba_mode,
         enforce_eager=False,
