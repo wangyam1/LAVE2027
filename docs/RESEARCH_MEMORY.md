@@ -6,6 +6,16 @@
 
 ## 当前交接
 
+**2026-11-27 23:18 CST｜`Qwen2.5-VL-7B-Instruct` 单卡（仅 GPU 0）`Video-MME-306`（`N = 306`, `102S/102M/102L`, 12 任务, `max_steps = 8`, Option B）全量关账并完成 CPU 单次解封评分（`score_qwen25vl_mme306_s8.json`: `4c389486...`），GPU 0 已自动无缝切入 `LongVideoBench-306`（已跑至 `10/306`）！**
+- **里程碑主结果（`N = 306` 独立视频，`vanilla_invalid_tool_steps = 0` & `lave_invalid_tool_steps = 0` 双臂零无效工具调用，`494/513 = 96.30%` 控制通过率，`visual_forwards == 0` 严格断言）**：
+  - `vanilla_text`：`132 / 306 (43.14%)`（S `50.98%` / M `44.12%` / L `34.31%`；`3.93` 步 / `2.97` 次视觉调用 / `63.58` 帧）；
+  - `lave_route_text`：`123 / 306 (40.20%, −2.94 pp)`（纯文本回答受 7B 字幕压缩瓶颈拖累），但 **同步减少视觉调用 `−9.8%`（`2.68 vs 2.97`）与 `−4.76` 帧（`58.82 vs 63.58`）**，Receiver 仅 `2.70 s/case`；
+  - `vanilla_latent_qa`：`169 / 306 (55.23%, +12.09 pp, p = 0.000341)`；
+  - **`lave_full`（+Mech A + Mech B 过滤空拒答 `clean_obs`）**：**`174 / 306 (56.86%)`** —— 对 `vanilla_text` **`+75/−33 (+13.73 pp, p = 0.000066)`**，对 `vanilla_latent_qa` **`+28/−23 (+1.63 pp)`**（改道子集 `+3.19 pp`），**Short (`73.53%`, `+22.55 pp`) / Medium (`57.84%`, `+13.73 pp`) / Long (`39.22%`, `+4.90 pp`) 全三档零回退**；
+  - `vanilla_latent_visonly`：`173 / 306 (56.54%, +13.40 pp, p = 0.000125)`；
+  - **`lave_full_visonly`（+Mech A 路由 + Mech B 纯视觉状态 Top-8 读出）**：**`177 / 306 (57.84%)`** —— 对 `vanilla_text` **`+77/−32 (+14.71 pp, 精确双侧 McNemar p = 0.000019 < 2e-5)`**，对 `vanilla_latent_visonly` **`+23/−19 (+1.31 pp)`**（`n = 188` 改道子集 `55.32% vs 53.19%, +2.13 pp`），12 大题型中 **10 胜 2 负**（Short `77.45%`、Medium `61.76%` 大幅领先；Long 上保留非空时间线文本的 `lave_full` 达 `39.22%`，较 `visonly` 高 `+4.90 pp`，揭示超长视频需保留全局时间线锚点）。
+- **两套 `N >= 300` 已关账合集（`Qwen2.5-VL-7B`, `N = 621`）**：`vanilla_text 213/621 (34.30%)` → **`lave_full_visonly 297/621 (47.83%, +13.53 pp)`**，均节省 **`−9.8%`** 视觉调用！
+
 **2026-11-27 16:31 CST｜`Qwen2.5-VL-7B-Instruct` 单卡（仅 GPU 0）`Video-Holmes-315`（`N = 315`, `max_steps = 8`, Option B 纯视觉状态读出 `visonly`）全量关账并完成 CPU 单次解封评分（`score_qwen25vl_holmes315_s8.json`: `34499116...`），同步推进 `Video-MME-306`（GPU 1/2 全程 `0 MiB`）！**
 - **里程碑主结果（`N = 315`, 7 类 × 45 题, 覆盖 Video-Holmes 全部 `270/270` 独立视频, `invalid_answers = {}` 零拒答, `vanilla_invalid_tool_steps = 0`, Receiver & Mech B 严格断言 `visual_forwards == 0`）**：
   - `vanilla_text`（8-step Caption VideoSeek）：`81 / 315 (25.71%)`（`4.71` 步 / `3.79` 次视觉调用 / `76.70` 帧）；
