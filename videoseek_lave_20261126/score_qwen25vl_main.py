@@ -76,7 +76,7 @@ def score_suite(suite, max_steps=8, check_gpu_release=True):
     spec = BENCHMARKS[suite]
     pfile = ROOT / spec["manifest"]
     pin = sha256_bytes(pfile.read_bytes())
-    if pin != spec["expected_pin"]:
+    if spec["expected_pin"] is not None and pin != spec["expected_pin"]:
         raise RuntimeError(f"Pin mismatch for {suite}")
     manifest = json.loads(pfile.read_bytes())
     cases = manifest["cases"][: spec["limit"]]

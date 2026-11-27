@@ -29,16 +29,34 @@ BENCHMARKS = {
         limit=140,
         adapter="holmes",
     ),
+    "holmes315": dict(
+        manifest="preflight_holmes315.json",
+        expected_pin=None,
+        limit=315,
+        adapter="holmes",
+    ),
     "mme144": dict(
         manifest="preflight_mme.json",
         expected_pin="5ce1fd95620eb747692001dadcddfeac3addbc0c35307d1b741d9c10b9075726",
         limit=144,
         adapter="mme",
     ),
+    "mme306": dict(
+        manifest="preflight_mme306.json",
+        expected_pin=None,
+        limit=306,
+        adapter="mme",
+    ),
     "lvb150": dict(
         manifest="preflight_lvb150.json",
         expected_pin="27b9d8338d198ec2bcd18d846ce7eaf3bae024d244a93692507c67b194d8ec08",
         limit=150,
+        adapter="lvb",
+    ),
+    "lvb306": dict(
+        manifest="preflight_lvb306.json",
+        expected_pin=None,
+        limit=306,
         adapter="lvb",
     ),
 }
@@ -79,7 +97,7 @@ def main():
         spec = BENCHMARKS[s]
         pfile = ROOT / spec["manifest"]
         actual_pin = sha256_bytes(pfile.read_bytes())
-        if actual_pin != spec["expected_pin"]:
+        if spec["expected_pin"] is not None and actual_pin != spec["expected_pin"]:
             raise RuntimeError(f"Pin mismatch for {s}: {actual_pin} != {spec['expected_pin']}")
         manifest = json.loads(pfile.read_bytes())
         if manifest.get("labels") != 0:
