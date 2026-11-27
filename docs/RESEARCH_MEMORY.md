@@ -6,6 +6,15 @@
 
 ## 当前交接
 
+**2026-11-28 07:28 CST｜Stage 1 `Qwen2.5-VL-7B-Instruct` 全部三套 `N >= 300` 主实验（合计 `927` 题，`max_steps = 8`，Option B）+ `VideoSeek-Image (N = 315)` + `n = 60` 无共享端到端延迟审计全部关账，GPU 0 干净归零并无缝切入 Stage 2 `Qwen3.5-9B`（`s = 8`）！**
+- **`LongVideoBench-306`（`score_qwen25vl_lvb306_s8.json`: `426bf97a...`, `N = 306`, 17 类, `138 dg=600 + 168 dg=3600`）**：
+  - `vanilla_text` `102/306 (33.33%)`（`3.87` 次视觉调用 / `77.86` 帧）→ `lave_route_text` `110/306 (35.95%, +21/−13, +2.61 pp)`（**`3.56` 次 `−8.0%` / `72.94` 帧 / `0` 无效工具调用**）→ `lave_full` `158/306 (51.63%, +78/−22, +18.30 pp, p < 1e-7)` → **`lave_full_visonly 161/306 (52.61%, +88/−29, +19.28 pp, p < 1e-7)`**（17 类 **14 胜 1 平 2 负**；超长 1 小时 `dg=3600 (n=168)` 达 **`51.19%` vs `vanilla_text 30.36% (+20.83 pp, p = 2.2e-5)` 且胜 `vanilla_latent_visonly 50.00% (+1.19 pp)`**！）。
+- **Stage 1 三基准总合集（`Qwen2.5-VL-7B-Instruct`, `N = 927`）**：`vanilla_text 315/927 (33.98%)` → `lave_route_text 319 (34.41%)` → `lave_full 436 (47.03%, +13.05 pp)` → `vanilla_latent_visonly 452 (48.76%)` → **`lave_full_visonly 458/927 (49.41%, +233/−90, +15.43 pp, p < 1e-15)`**，同时 **3/3 基准全线减少视觉调用 `−9.2%`（`−9.8% / −9.8% / −8.0%`）**！
+- **通宵 GPU 2 Stage 3A 双项关账（`score_qwen25vl_holmes315_img_lat_s8.json`: `9bcad942...`）**：
+  - **`VideoSeek-Image (N = 315)`**：`114/315 (36.19%)`（均题反复喂入 `146.1` 帧 / `30,713` prompt tokens、被迫裁剪 `33.4` 帧），**`lave_full_visonly (38.10%)` 反超 `+1.90 pp (+48/−42)`** 且零回放、零裁剪；
+  - **`n = 60` 无共享端到端延迟审计（Table 6b）**：`vanilla_text 49.35 s` vs `lave_route_text 52.24 s (+5.9%, rx 3.90s)` vs **`lave_full_visonly 55.07 s (+5.72 s / +11.6%, 纯视觉读出仅 0.27 s)`**。
+- **晨间切换状态**：GPU 0 已无缝启动 Stage 2 `Qwen3.5-9B`（`holmes315, mme306, lvb306`, `s=8`, `mamba_cache_mode='align'`）；GPU 2 当前正在跑 Table 2 五臂消融 `traj_bundle (68/315)` 并将在 `07:45 CST` 自动归零还卡。
+
 **2026-11-27 23:18 CST｜`Qwen2.5-VL-7B-Instruct` 单卡（仅 GPU 0）`Video-MME-306`（`N = 306`, `102S/102M/102L`, 12 任务, `max_steps = 8`, Option B）全量关账并完成 CPU 单次解封评分（`score_qwen25vl_mme306_s8.json`: `4c389486...`），GPU 0 已自动无缝切入 `LongVideoBench-306`（已跑至 `10/306`）！**
 - **里程碑主结果（`N = 306` 独立视频，`vanilla_invalid_tool_steps = 0` & `lave_invalid_tool_steps = 0` 双臂零无效工具调用，`494/513 = 96.30%` 控制通过率，`visual_forwards == 0` 严格断言）**：
   - `vanilla_text`：`132 / 306 (43.14%)`（S `50.98%` / M `44.12%` / L `34.31%`；`3.93` 步 / `2.97` 次视觉调用 / `63.58` 帧）；
