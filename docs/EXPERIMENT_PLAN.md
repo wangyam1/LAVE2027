@@ -22,6 +22,26 @@
 
 **Logical Claim (H1)**: *Training-free visual-state communication simultaneously improves answer accuracy AND reduces visual tool calls & sampled frames across diverse long-video tasks and distinct model architectures.*
 
+### 1a. Directly Reusable Published Baselines (Cited Directly — 0 GPU Cost!)
+
+| Method | Category | Backbone | Video-MME (w/o sub) | LongVideoBench | Video-Holmes | Verified Source & Citation |
+| :--- | :--- | :--- | :---: | :---: | :---: | :--- |
+| `Qwen2.5-VL-7B` (Uniform) | Single-Turn VLM | Qwen2.5-VL-7B | `65.1%` | `56.0%` | `34.7%` | Bai et al. (2025); cited in Video-o3 (ICML) |
+| `LLaVA-Video-7B` | Single-Turn VLM | Qwen2-7B | `63.3%` | `58.2%` | — | Zhang et al. (2024); cited in Video-o3 |
+| `VideoChat-R1-7B` | RL Post-Trained | Qwen2.5-VL-7B | — | — | `33.0%` (`32f`) | Li et al. (2025); VideoSeek Table 2 (`arXiv:2603.20185`) |
+| `SEED-Bench-R1-7B` | RL Post-Trained | Qwen2.5-VL-7B | — | — | `33.5%` (`32f`) | Chen et al. (2025); VideoSeek Table 2 (`arXiv:2603.20185`) |
+| `Video-R1-7B` | RL Post-Trained | Qwen2.5-VL-7B | `61.4%` | — | `36.5%` (`32f`) | Feng et al. (2025); VideoSeek Table 2 & Video-o3 |
+| `VideoMind-7B` | Trained LoRA Agent | Qwen2.5-VL-7B | `58.2%` (`L: 49.2%`) | `56.3%` | — | Liu et al. (2025) official GitHub / paper |
+| `Video-RTS-7B` / `Video-MTR-7B` | Iterative Agent | Qwen2.5-VL-7B | `63.0%` / `59.0%` | `56.6%` / `56.4%` | — | Cited in Video-o3 (ICML) |
+| `Conan-7B` | Multi-Turn Tool Agent (Trained) | Qwen2.5-VL-7B | `60.5%` | `56.6%` | `44.6%` | Cited in Video-o3 (ICML) |
+| `Video-o3-7B` (SFT+RL, 573k, ≤768f) | Trained Interleaved Agent | Qwen2.5-VL-7B | `66.5%` | `60.5%` | `46.5%` | Video-o3 (ICML) |
+| `VideoAgent` / `VideoTree` / `VCA` | Training-Free Agents | Proprietary/LLM | `L: 46.4% / 53.1% / 54.2%` | — | — | VideoSeek Table 1 (`arXiv:2603.20185`) |
+| `VideoSeek` (GPT-5, Reference Upper) | Training-Free Agent | GPT-5 | `L: 70.1%` (`60.9f`) | `73.5%` (`29.6f`) | `47.3%` (`42.7f`) | Lin et al. (CVPR 2026, `arXiv:2603.20185`) |
+
+> **Important Note on `Qwen2.5-VL-7B + VideoSeek`**: Official VideoSeek (`arXiv:2603.20185`) only evaluated proprietary reasoning backbones (`GPT-5`, `o4-mini`, `GPT-4.1`), and LARVA (`ICLR 2027` withdrawn) used a 20k-trajectory CoT-distilled LoRA student rather than off-the-shelf `Qwen2.5-VL-7B + VideoSeek`. Therefore, **same-cohort paired `Vanilla VideoSeek` MUST be executed alongside `VideoSeek + LAVE`** (sharing Step-1 `overview` + `tool_cache` so marginal overhead is only ~35–40%, while unlocking exact paired McNemar `p`-values and `LAVE-Readout`!).
+
+### 1b. Controlled Same-Harness Internal Comparison (Executed on Exact Frozen `N >= 300` Cohorts)
+
 | Backbone Family | Architecture | Benchmarks (All `N >= 300`, `max_steps = 8`) | Arms Evaluated | Primary Metrics |
 | :--- | :--- | :--- | :--- | :--- |
 | **`Qwen2.5-VL-7B-Instruct`** *(LARVA's exact backbone)* | Pure Transformer | • **Video-Holmes-315** (`N=315`)<br>• **Video-MME-306** (`N=306`: 102S/102M/102L)<br>• **LongVideoBench-306** (`N=306`, 17 cats) | `Vanilla VideoSeek (Text)`<br>`LAVE-Route (Mech A)`<br>`LAVE-Readout (Mech B)`<br>`LAVE-Full (Mech A+B)` | Accuracy, Paired McNemar `p`, Avg Steps, Visual Calls, Frames, `rx_s` |
