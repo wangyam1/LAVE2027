@@ -45,6 +45,34 @@ class TestVideoSeekLaveCPU(unittest.TestCase):
         ans_call = "<tool_call><function=answer></function></tool_call>"
         self.assertEqual(parse_tool_call(ans_call)["name"], "answer")
 
+        # Qwen2.5-VL positional & natural-language tool call formats
+        p3 = parse_tool_call('skim("man in black beanie and hoodie", 0.0, 136.0)')
+        self.assertEqual(p3["name"], "skim")
+        self.assertAlmostEqual(p3["arguments"]["start_time"], 0.0)
+        self.assertAlmostEqual(p3["arguments"]["end_time"], 136.0)
+        self.assertEqual(p3["arguments"]["query"], "man in black beanie and hoodie")
+
+        p4 = parse_tool_call('focus(213.6, 213.6, "finding a key from her bag")')
+        self.assertEqual(p4["name"], "focus")
+        self.assertAlmostEqual(p4["arguments"]["start_time"], 213.6)
+        self.assertEqual(p4["arguments"]["query"], "finding a key from her bag")
+
+        p5 = parse_tool_call("focus(40.0, 128.0)")
+        self.assertEqual(p5["name"], "focus")
+        self.assertAlmostEqual(p5["arguments"]["end_time"], 128.0)
+
+        p6 = parse_tool_call('skim with the query "The vehicle broke down" from 0.0s to 243.0s.')
+        self.assertEqual(p6["name"], "skim")
+        self.assertAlmostEqual(p6["arguments"]["end_time"], 243.0)
+        self.assertEqual(p6["arguments"]["query"], "The vehicle broke down")
+
+        p7 = parse_tool_call('skim with query="supernatural" and start_time=82.0s and end_time=120.0s')
+        self.assertEqual(p7["name"], "skim")
+        self.assertAlmostEqual(p7["arguments"]["start_time"], 82.0)
+
+        self.assertEqual(parse_tool_call("answer")["name"], "answer")
+        self.assertEqual(parse_tool_call("answer with start_time=0.0s and end_time=248.0s.")["name"], "answer")
+
     def test_extract_choice_letter(self):
         valid = ("A", "B", "C", "D", "E", "F")
         self.assertEqual(extract_choice_letter("F", valid), "F")

@@ -394,6 +394,33 @@ class VLLMLaveEngine:
             ))
         return res
 
+    def generate_choice_letter(self, messages, valid_letters):
+        """Deterministic 1-token forced-choice fallback over valid uppercase letters (eliminates refusals)."""
+        prompt = self._render_chat(messages, enable_thinking=False)
+        base_ids = self.tokenizer.encode(prompt, add_special_tokens=False)
+        allowed = []
+        id_to_letter = {}
+        for ch in valid_letters:
+            ch_u = str(ch).strip().upper()
+            full = self.tokenizer.encode(prompt + ch_u, add_special_tokens=False)
+            if len(full) == len(base_ids) + 1 and full[:-1] == base_ids:
+                tid = int(full[-1])
+                allowed.append(tid)
+                id_to_letter[tid] = ch_u
+        if not allowed:
+            return None
+        params = self._make_sampling_params(
+            temperature=0.0,
+            max_tokens=1,
+            allowed_token_ids=allowed,
+        )
+        outputs = self.llm.generate([{"prompt": prompt}], sampling_params=params, use_tqdm=False)
+        out = outputs[0].outputs[0]
+        if out.token_ids and int(out.token_ids[0]) in id_to_letter:
+            return id_to_letter[int(out.token_ids[0])]
+        txt = (out.text or "").strip().upper()
+        return txt[:1] if txt[:1] in set(valid_letters) else None
+
     def score_receiver_slots(self, prompt_text, grid_thw, slot_embeds_list, y_id, n_id, *, batch_size=33):
         """Score precomputed post-merger visual slots with 0 vision encoder calls and native M-RoPE."""
         import torch

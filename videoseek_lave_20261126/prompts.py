@@ -48,7 +48,7 @@ ACTION_PARSER_PROMPT = (
     "1) Call exactly one tool from the provided tool schema: overview, skim, focus, or answer.\n"
     "2) The tool name and numeric start_time/end_time (in seconds) must match the thought.\n"
     "3) If the thought says evidence is sufficient or identifies the final option, call `answer`.\n"
-    "4) Return ONLY the tool call, no extra explanation."
+    '4) Return ONLY a single JSON tool call such as <tool_call>{"name": "focus", "arguments": {"query": "...", "start_time": 10.0, "end_time": 26.0}}</tool_call> or <tool_call>{"name": "answer", "arguments": {}}</tool_call>, with no extra text.'
 )
 
 

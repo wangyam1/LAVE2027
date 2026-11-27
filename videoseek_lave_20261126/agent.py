@@ -185,14 +185,18 @@ def parse_tool_call(raw_text, valid_tools=("overview", "skim", "focus", "answer"
         except Exception:
             pass
 
-    # Pattern 4: function-like text fallback e.g. focus(query="...", start_time=10, end_time=25)
+    # Pattern 4: function-like call with keyword OR positional arguments
+    # Handles: focus(query="...", start_time=10, end_time=25), skim("query", 0.0, 136.0),
+    #          focus(213.6, 213.6, "query"), focus(40.0, 128.0), answer(), overview()
     for tname in ("focus", "skim", "overview", "answer"):
-        if re.search(rf"\b{tname}\s*\(", text, flags=re.IGNORECASE):
+        m_call = re.search(rf"\b{tname}\s*\(([^)]*)\)", text, flags=re.IGNORECASE)
+        if m_call:
             if tname in ("overview", "answer"):
                 return dict(name=tname, arguments={}, parse_mode="regex_call")
-            st = re.search(r"start_time\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)", text)
-            et = re.search(r"end_time\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)", text)
-            qm = re.search(r"query\s*[=:]\s*[\"']([^\"']+)[\"']", text)
+            inner = m_call.group(1)
+            st = re.search(r"start_time\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)", inner)
+            et = re.search(r"end_time\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)", inner)
+            qm = re.search(r"query\s*[=:]\s*[\"']([^\"']+)[\"']", inner)
             if st and et:
                 return dict(
                     name=tname,
@@ -203,6 +207,56 @@ def parse_tool_call(raw_text, valid_tools=("overview", "skim", "focus", "answer"
                     ),
                     parse_mode="regex_call",
                 )
+            # Positional args: extract quoted query (optional) and first two numbers
+            q_pos = re.search(r"[\"']([^\"']+)[\"']", inner)
+            inner_no_q = re.sub(r"[\"'][^\"']*[\"']", " ", inner)
+            nums = [float(x) for x in re.findall(r"(?<![a-zA-Z0-9_])([0-9]+(?:\.[0-9]+)?)\s*s?\b", inner_no_q)]
+            if len(nums) >= 2:
+                return dict(
+                    name=tname,
+                    arguments=dict(
+                        query=q_pos.group(1) if q_pos else "Find evidence relevant to the question.",
+                        start_time=nums[0],
+                        end_time=nums[1],
+                    ),
+                    parse_mode="positional_call",
+                )
+
+    # Pattern 5: natural-language tool invocations (e.g., Qwen2.5-VL:
+    # 'skim with query "..." from 0.0s to 243.0s', 'focus with start_time=82.0s and end_time=84.0s', bare 'answer')
+    m_head = re.match(r"^\s*(focus|skim|overview|answer)\b", text, flags=re.IGNORECASE)
+    if m_head:
+        tname = m_head.group(1).lower()
+        if tname in ("overview", "answer"):
+            return dict(name=tname, arguments={}, parse_mode="nl_call")
+        q_m = re.search(r"(?:query\s*[=:]?\s*)?[\"']([^\"']+)[\"']", text)
+        st = re.search(r"start_time\s*[=:]?\s*([0-9]+(?:\.[0-9]+)?)", text, flags=re.IGNORECASE)
+        et = re.search(r"end_time\s*[=:]?\s*([0-9]+(?:\.[0-9]+)?)", text, flags=re.IGNORECASE)
+        if st and et:
+            return dict(
+                name=tname,
+                arguments=dict(
+                    query=q_m.group(1) if q_m else "Find evidence relevant to the question.",
+                    start_time=float(st.group(1)),
+                    end_time=float(et.group(1)),
+                ),
+                parse_mode="nl_kv_call",
+            )
+        m_range = re.search(
+            r"(?:from|between)\s+([0-9]+(?:\.[0-9]+)?)\s*s?\s*(?:to|and|-|–)\s*([0-9]+(?:\.[0-9]+)?)\s*s?",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if m_range:
+            return dict(
+                name=tname,
+                arguments=dict(
+                    query=q_m.group(1) if q_m else "Find evidence relevant to the question.",
+                    start_time=float(m_range.group(1)),
+                    end_time=float(m_range.group(2)),
+                ),
+                parse_mode="nl_range_call",
+            )
     return None
 
 
@@ -734,7 +788,31 @@ class VideoSeekLaveRunner:
         final_text_raw = ""
         step4_text_answer = None
         step4_frames = None
+        step6_text_answer = None
+        step6_frames = None
         finish_reason = "reach_max_steps"
+
+        def _query_final_choice(prefix_line=""):
+            ans_msgs = list(messages) + [
+                {
+                    "role": "user",
+                    "content": (
+                        f"{prefix_line}"
+                        f"Question:\n{question_text}\n\n"
+                        f"Even if the evidence is partial, you MUST commit to the single best option letter "
+                        f"({', '.join(valid_letters)}). Do NOT refuse or say 'No relevant content found.'\n"
+                        f"Respond with ONLY one uppercase letter."
+                    ),
+                }
+            ]
+            ans_out = self.engine.generate_text(ans_msgs, max_tokens=self.cfg.answer_max_tokens)
+            raw = ans_out["text"].strip()
+            ch = extract_choice_letter(raw, valid_letters)
+            if ch is None and hasattr(self.engine, "generate_choice_letter"):
+                ch = self.engine.generate_choice_letter(ans_msgs, valid_letters)
+                if ch is not None:
+                    raw = f"{raw} [forced:{ch}]".strip()
+            return ch, raw, ans_out["seconds"]
 
         for step_id in range(2, self.cfg.max_steps + 1):
             messages.append(
@@ -798,21 +876,10 @@ class VideoSeekLaveRunner:
             args = dict(action.get("arguments") or {})
 
             if tname == "answer":
-                ans_msgs = list(messages) + [
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Question:\n{question_text}\n\n"
-                            f"Respond with ONLY the single best option letter ({', '.join(valid_letters)})."
-                        ),
-                    }
-                ]
-                ans_out = self.engine.generate_text(ans_msgs, max_tokens=self.cfg.answer_max_tokens)
-                final_text_raw = ans_out["text"].strip()
-                final_text_answer = extract_choice_letter(final_text_raw, valid_letters)
+                final_text_answer, final_text_raw, ans_sec = _query_final_choice()
                 finish_reason = "answer_tool"
                 steps_log.append(
-                    dict(step_id=step_id, tool="answer", arguments={}, frames=0, rerouted=False, seconds=ans_out["seconds"])
+                    dict(step_id=step_id, tool="answer", arguments={}, frames=0, rerouted=False, seconds=ans_sec)
                 )
                 break
 
@@ -835,6 +902,11 @@ class VideoSeekLaveRunner:
             raw_e = float(args.get("end_time", min(duration, raw_s + 16.0)))
             if raw_e < raw_s:
                 raw_s, raw_e = raw_e, raw_s
+            if (raw_e - raw_s) < 2.0:
+                pad = 6.0 if tname == "focus" else 15.0
+                mid = 0.5 * (raw_s + raw_e)
+                raw_s = max(0.0, mid - pad)
+                raw_e = min(duration, mid + pad)
             p_start = max(0.0, min(raw_s, max(0.0, duration - 1.0)))
             p_end = max(p_start + 1.0, min(raw_e, duration))
             if tname == "focus" and (p_end - p_start) > self.cfg.focus_max_span:
@@ -940,41 +1012,24 @@ class VideoSeekLaveRunner:
                     seconds=tool_out["seconds"],
                 )
             )
-            # Anytime Step-4 checkpoint (official VideoSeek default max_steps=4) without disturbing trajectory
+            # Anytime Step-4 & Step-6 checkpoints without disturbing trajectory
             if step_id == 4 and step4_text_answer is None and self.cfg.max_steps > 4:
-                s4_msgs = list(messages) + [
-                    {
-                        "role": "user",
-                        "content": (
-                            "You have reached the maximum number of steps.\n"
-                            f"Question:\n{question_text}\n\n"
-                            f"Respond with ONLY the single best option letter ({', '.join(valid_letters)})."
-                        ),
-                    }
-                ]
-                s4_out = self.engine.generate_text(s4_msgs, max_tokens=self.cfg.answer_max_tokens)
-                step4_text_answer = extract_choice_letter(s4_out["text"].strip(), valid_letters)
+                step4_text_answer, _, _ = _query_final_choice("You have reached the maximum number of steps.\n")
                 step4_frames = total_frames
+            if step_id == 6 and step6_text_answer is None and self.cfg.max_steps > 6:
+                step6_text_answer, _, _ = _query_final_choice("You have reached the maximum number of steps.\n")
+                step6_frames = total_frames
 
         # If max_steps reached without calling answer -> force final pure-text answer (official VideoSeek)
         if final_text_answer is None:
-            ans_msgs = list(messages) + [
-                {
-                    "role": "user",
-                    "content": (
-                        "You have reached the maximum number of steps.\n"
-                        f"Question:\n{question_text}\n\n"
-                        f"Respond with ONLY the single best option letter ({', '.join(valid_letters)})."
-                    ),
-                }
-            ]
-            ans_out = self.engine.generate_text(ans_msgs, max_tokens=self.cfg.answer_max_tokens)
-            final_text_raw = ans_out["text"].strip()
-            final_text_answer = extract_choice_letter(final_text_raw, valid_letters)
+            final_text_answer, final_text_raw, _ = _query_final_choice("You have reached the maximum number of steps.\n")
 
         if step4_text_answer is None:
             step4_text_answer = final_text_answer
             step4_frames = total_frames
+        if step6_text_answer is None:
+            step6_text_answer = final_text_answer
+            step6_frames = total_frames
 
         # Mechanism B: Zero-pixel Latent-Retrieved Visual Verification preserving Planner's multi-step reasoning
         traj_brief = "\n\n".join(
@@ -994,6 +1049,7 @@ class VideoSeekLaveRunner:
             visual_tool_calls=visual_tool_calls,
             total_frames=total_frames,
             step4_frames=step4_frames,
+            step6_frames=step6_frames,
             bank_size=len(bank),
             total_vision_calls=total_vision_calls,
             control_scans=control_scans,
@@ -1003,6 +1059,7 @@ class VideoSeekLaveRunner:
             receiver_seconds=round(receiver_seconds, 3),
             text_answer=final_text_answer,
             step4_text_answer=step4_text_answer,
+            step6_text_answer=step6_text_answer,
             text_answer_raw=final_text_raw,
             latent_qa=latent_qa,
             steps=steps_log,
@@ -1037,9 +1094,11 @@ class VideoSeekLaveRunner:
             answers=dict(
                 vanilla_text=vanilla["text_answer"],
                 vanilla_step4=vanilla["step4_text_answer"],
+                vanilla_step6=vanilla["step6_text_answer"],
                 vanilla_latent_qa=vanilla["latent_qa"]["answer"],
                 lave_route_text=lave["text_answer"],
                 lave_step4=lave["step4_text_answer"],
+                lave_step6=lave["step6_text_answer"],
                 lave_full=lave["latent_qa"]["answer"],
             ),
             elapsed_seconds=round(perf_counter() - t0, 3),
