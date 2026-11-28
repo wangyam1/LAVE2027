@@ -6,6 +6,15 @@
 
 ## 当前交接
 
+**2026-11-28 21:02 CST｜Stage 2 `Qwen3.5-9B` × `Video-Holmes-315`（`N = 315`, `max_steps = 8`, Option B, 单卡 GPU 0）全量关账并完成 CPU 单次解封评分（`score_qwen35_9b_holmes315_s8.json`: `64d86950...`），零训练反超 `VideoSeek (GPT-5)` 与 `Video-o3-7B`！GPU 0 已自动无缝切入 `Video-MME-306`（`5 / 306`）！**
+- **里程碑主结果（`N = 315`, 7×45, `invalid_answers = {}` 零拒答, `959/960 = 99.90%` 控制通过率, `visual_forwards == 0`）**：
+  - `vanilla_text`：`126 / 315 (40.00%)`（`5.51` 步 / `4.58` 次视觉调用 / `89.30` 帧；`S4 42.54% → S6 41.90% → S8 40.00%` 明显长链漂移 `−2.54 pp`）；
+  - `lave_route_text`：`113 / 315 (35.87%, −4.13 pp)`，但 **大幅削减视觉调用 `−11.6%`（`4.05 vs 4.58`）与 `−8.5` 帧（`80.76 vs 89.30`）**；
+  - `vanilla_latent_qa`：`143 / 315 (45.40%, +5.40 pp, p = 0.0857)`；
+  - **`lave_full`（+Mech A + Mech B `clean_obs`）**：**`145 / 315 (46.03%)`**（vs `vanilla_text +56/−37, +6.03 pp, p = 0.0614`；胜 `vanilla_latent_qa` `+0.63 pp` 且省 `−11.6%` 视觉调用；`TA` 达 `22/45`）；
+  - **`lave_full_visonly`（+Mech A + Mech B 纯视觉状态）**：**`150 / 315 (47.62%)`**（`+64/−40`, **`+7.62 pp, p = 0.0236 *`**，**超越 `VideoSeek (GPT-5) 47.3%`** 且省 **`−11.6%` 视觉调用**）；
+  - **`vanilla_latent_visonly`（仅 Mech B 纯视觉状态）**：**`154 / 315 (48.89%)`**（`+67/−39`, **`+8.89 pp, p = 0.00842 ** `**，**超越 `VideoSeek (GPT-5) 47.3%` 达 `+1.59 pp`、超越 573k SFT+RL 训练的 `Video-o3-7B (46.5%)` 达 `+2.39 pp`**，100% Training-Free、0 额外视觉编码！）。
+
 **2026-11-28 07:28 CST｜Stage 1 `Qwen2.5-VL-7B-Instruct` 全部三套 `N >= 300` 主实验（合计 `927` 题，`max_steps = 8`，Option B）+ `VideoSeek-Image (N = 315)` + `n = 60` 无共享端到端延迟审计全部关账，GPU 0 干净归零并无缝切入 Stage 2 `Qwen3.5-9B`（`s = 8`）！**
 - **`LongVideoBench-306`（`score_qwen25vl_lvb306_s8.json`: `426bf97a...`, `N = 306`, 17 类, `138 dg=600 + 168 dg=3600`）**：
   - `vanilla_text` `102/306 (33.33%)`（`3.87` 次视觉调用 / `77.86` 帧）→ `lave_route_text` `110/306 (35.95%, +21/−13, +2.61 pp)`（**`3.56` 次 `−8.0%` / `72.94` 帧 / `0` 无效工具调用**）→ `lave_full` `158/306 (51.63%, +78/−22, +18.30 pp, p < 1e-7)` → **`lave_full_visonly 161/306 (52.61%, +88/−29, +19.28 pp, p < 1e-7)`**（17 类 **14 胜 1 平 2 负**；超长 1 小时 `dg=3600 (n=168)` 达 **`51.19%` vs `vanilla_text 30.36% (+20.83 pp, p = 2.2e-5)` 且胜 `vanilla_latent_visonly 50.00% (+1.19 pp)`**！）。
